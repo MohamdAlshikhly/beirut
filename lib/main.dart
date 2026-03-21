@@ -1,0 +1,117 @@
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'screens/computer_login_screen.dart';
+import 'screens/pos_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/mobile_dashboard.dart';
+import 'screens/cashier_mobile_dashboard.dart';
+import 'providers/theme_provider.dart';
+import 'providers/data_providers.dart';
+import 'utils/app_colors.dart';
+import 'services/sync_service.dart';
+import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:shared_preferences/shared_preferences.dart';
+import 'services/local_database.dart';
+
+late SharedPreferences prefs;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  prefs = await SharedPreferences.getInstance();
+
+  // Initialize SQLite Local DB
+  await LocalDatabase.instance.database;
+
+  await Supabase.initialize(
+    url: 'https://bwkhkwtolzsmebxkpmht.supabase.co',
+    anonKey:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ3a2hrd3RvbHpzbWVieGtwbWh0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQwMDg5MzgsImV4cCI6MjA4OTU4NDkzOH0.SL0gtsfpaM741naIyFX21fCSECAzRxqbopn0CiEw4vo',
+  );
+
+  final container = ProviderContainer();
+  final syncService = container.read(syncServiceProvider);
+
+  // Initial Sync: Upload offline data first, then download new updates
+  final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  if (!isMobile) {
+    syncService.syncUp();
+    syncService.syncDown();
+
+    // Start Periodic Sync (Every 5 minutes)
+    Timer.periodic(const Duration(minutes: 5), (timer) {
+      syncService.syncUp();
+      syncService.syncDown();
+    });
+  }
+
+  runApp(UncontrolledProviderScope(container: container, child: const MyApp()));
+}
+
+class MyApp extends ConsumerWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
+    final user = ref.watch(authProvider);
+
+    return MaterialApp(
+      title: 'نظام الكاشير',
+      debugShowCheckedModeBanner: false,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('ar', 'IQ')],
+      locale: const Locale('ar', 'IQ'),
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      themeMode: themeMode,
+      home: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 800) {
+            if (user == null) {
+              return const LoginScreen();
+            } else if (user.role == 'cashier') {
+              return const CashierMobileDashboardScreen();
+            } else {
+              return const MobileDashboard();
+            }
+          } else {
+            return user == null
+                ? const ComputerLoginScreen()
+                : const PosScreen();
+          }
+        },
+      ),
+    );
+  }
+
+  ThemeData _buildTheme(Brightness brightness) {
+    var baseTheme = ThemeData(
+      brightness: brightness,
+      useMaterial3: true,
+      colorSchemeSeed: AppColors.primary,
+    );
+
+    return baseTheme.copyWith(
+      textTheme: GoogleFonts.cairoTextTheme(baseTheme.textTheme),
+      colorScheme: baseTheme.colorScheme.copyWith(
+        primary: AppColors.primary,
+        secondary: AppColors.secondary,
+      ),
+      scaffoldBackgroundColor: brightness == Brightness.dark
+          ? const Color(0xFF0B132B)
+          : const Color(0xFFF8FAFC),
+    );
+  }
+}
