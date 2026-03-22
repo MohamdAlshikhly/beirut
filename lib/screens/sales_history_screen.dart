@@ -10,6 +10,7 @@ import '../screens/camera_scanner_screen.dart';
 import '../widgets/skeleton_container.dart';
 import '../services/local_database.dart';
 import '../services/sync_service.dart';
+import '../utils/print_utils.dart';
 
 class SalesHistoryScreen extends ConsumerStatefulWidget {
   const SalesHistoryScreen({super.key});
@@ -746,6 +747,36 @@ class _SaleDetailsScreenState extends ConsumerState<SaleDetailsScreen> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent.withValues(alpha: 0.1),
+                    foregroundColor: Colors.blueAccent,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: Colors.blueAccent),
+                    ),
+                  ),
+                  icon: const Icon(PhosphorIconsBold.printer),
+                  label: const Text(
+                    'طباعة الفاتورة',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: () {
+                    PrintUtils.showPrintDialog(
+                      context: context,
+                      ref: ref,
+                      cartItems: _items,
+                      total: widget.total,
+                      saleId: widget.saleId,
+                    );
+                  },
+                ),
               ),
               const SizedBox(height: 24),
             ],

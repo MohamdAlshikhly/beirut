@@ -12,6 +12,8 @@ import '../services/sync_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show Platform;
 
+enum SidebarView { cart, history, details }
+
 final isMobileProvider = Provider<bool>((ref) {
   if (kIsWeb) return false;
   return Platform.isAndroid || Platform.isIOS;
@@ -271,6 +273,44 @@ class EditingSaleIdNotifier extends Notifier<int?> {
 final editingSaleIdProvider = NotifierProvider<EditingSaleIdNotifier, int?>(() {
   return EditingSaleIdNotifier();
 });
+
+class SidebarViewNotifier extends Notifier<SidebarView> {
+  @override
+  SidebarView build() => SidebarView.cart;
+  void set(SidebarView view) => state = view;
+}
+
+final sidebarViewProvider = NotifierProvider<SidebarViewNotifier, SidebarView>(
+  () {
+    return SidebarViewNotifier();
+  },
+);
+
+class SelectedHistorySaleNotifier extends Notifier<Map<String, dynamic>?> {
+  @override
+  Map<String, dynamic>? build() => null;
+  void set(Map<String, dynamic>? sale) => state = sale;
+}
+
+final selectedHistorySaleProvider =
+    NotifierProvider<SelectedHistorySaleNotifier, Map<String, dynamic>?>(() {
+      return SelectedHistorySaleNotifier();
+    });
+
+class PrintingLogsNotifier extends Notifier<List<String>> {
+  @override
+  List<String> build() => [];
+  void add(String log) => state = [
+    ...state,
+    '[${DateFormat('HH:mm:ss').format(DateTime.now())}] $log',
+  ];
+  void clear() => state = [];
+}
+
+final printingLogsProvider =
+    NotifierProvider<PrintingLogsNotifier, List<String>>(() {
+      return PrintingLogsNotifier();
+    });
 
 class OriginalCartItemsNotifier extends Notifier<List<CartItem>> {
   @override

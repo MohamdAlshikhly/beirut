@@ -7,6 +7,10 @@ import '../utils/glass_container.dart';
 import '../utils/app_colors.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../screens/sales_history_screen.dart';
+import '../utils/print_utils.dart';
+
+import 'sidebar_history.dart';
+import 'sidebar_details.dart';
 
 class CartSidebar extends ConsumerWidget {
   final VoidCallback? onPaymentSuccess;
@@ -15,6 +19,25 @@ class CartSidebar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final view = ref.watch(sidebarViewProvider);
+
+    switch (view) {
+      case SidebarView.history:
+        return const GlassContainer(
+          padding: EdgeInsets.all(0),
+          child: SidebarHistory(),
+        );
+      case SidebarView.details:
+        return const GlassContainer(
+          padding: EdgeInsets.all(0),
+          child: SidebarDetails(),
+        );
+      case SidebarView.cart:
+        return _buildCartView(context, ref);
+    }
+  }
+
+  Widget _buildCartView(BuildContext context, WidgetRef ref) {
     final cartItems = ref.watch(cartProvider);
     final total = ref.read(cartProvider.notifier).total;
     final theme = Theme.of(context);
@@ -48,14 +71,21 @@ class CartSidebar extends ConsumerWidget {
                       PhosphorIconsRegular.clockCounterClockwise,
                     ),
                     onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const SalesHistoryScreen(),
-                        ),
-                      );
+                      final isMobile = ref.read(isMobileProvider);
+                      if (isMobile) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SalesHistoryScreen(),
+                          ),
+                        );
+                      } else {
+                        ref
+                            .read(sidebarViewProvider.notifier)
+                            .set(SidebarView.history);
+                      }
                     },
-                    tooltip: 'تعديل فاتورة سابقة',
+                    tooltip: 'سجل الفواتير',
                   )
                 else
                   IconButton(
@@ -206,6 +236,9 @@ class CartSidebar extends ConsumerWidget {
     WidgetRef ref,
     String method,
   ) async {
+    final cartItems = ref.read(cartProvider);
+    final total = ref.read(cartProvider.notifier).total;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => Focus(
@@ -278,6 +311,13 @@ class CartSidebar extends ConsumerWidget {
         if (onPaymentSuccess != null) {
           onPaymentSuccess!();
         }
+
+        // Show Print Receipt Dialog only on Computer
+        final isMobile = ref.read(isMobileProvider);
+        if (!isMobile) {
+          _showPrintDialog(context, ref, cartItems, total);
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('تم الحفظ بنجاح!'),
@@ -293,6 +333,21 @@ class CartSidebar extends ConsumerWidget {
         );
       }
     }
+  }
+
+  void _showPrintDialog(
+    BuildContext context,
+    WidgetRef ref,
+    List<CartItem> cartItems,
+    double total,
+  ) {
+    PrintUtils.showPrintDialog(
+      context: context,
+      ref: ref,
+      cartItems: cartItems,
+      total: total,
+      saleId: ref.read(editingSaleIdProvider),
+    );
   }
 }
 
