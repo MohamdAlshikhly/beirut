@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import '../providers/data_providers.dart';
 import 'package:enough_convert/enough_convert.dart';
 
+enum PrinterProtocol { tspl, escPos }
+
 final printingServiceProvider = Provider((ref) => PrintingService(ref));
 
 class PrintingService {
@@ -61,9 +63,15 @@ class PrintingService {
     int? saleId,
     PrinterDevice? selectedDevice,
     String? networkIp,
+    PrinterProtocol protocol = PrinterProtocol.escPos,
   }) async {
     // 1. Generate Content
-    final bytes = await _generateTsplBytes(cartItems, total, saleId: saleId);
+    Uint8List bytes;
+    if (protocol == PrinterProtocol.tspl) {
+      bytes = await _generateTsplBytes(cartItems, total, saleId: saleId);
+    } else {
+      bytes = await _generateEscPosBytes(cartItems, total, saleId: saleId);
+    }
 
     // 2. Connect and Send
     final printerManager = PrinterManager.instance;
@@ -98,6 +106,58 @@ class PrintingService {
 
     await printerManager.send(type: PrinterType.usb, bytes: bytes);
     await printerManager.disconnect(type: PrinterType.usb);
+  }
+
+  Future<Uint8List> _generateEscPosBytes(
+    List<CartItem> items,
+    double total, {
+    int? saleId,
+  }) async {
+    final List<int> bytes = [];
+    // ESC/POS Commands
+    const esc = 0x1B;
+    const gs = 0x1D;
+
+    // Initialize printer
+    bytes.addAll([esc, 0x40]);
+
+    // Align Center
+    bytes.addAll([esc, 0x61, 1]);
+    bytes.addAll(utf8.encode('Dukan Beirut\n'));
+    bytes.addAll(utf8.encode('Receipt Test\n'));
+    bytes.addAll(utf8.encode('---------------------------\n'));
+
+    // Align Left
+    bytes.addAll([esc, 0x61, 0]);
+    if (saleId != null) {
+      bytes.addAll(utf8.encode('Invoice: #$saleId\n'));
+    }
+    bytes.addAll(
+      utf8.encode(
+        'Date: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}\n',
+      ),
+    );
+    bytes.addAll(utf8.encode('---------------------------\n'));
+
+    for (var item in items) {
+      bytes.addAll(
+        utf8.encode(
+          '${item.product.name.padRight(15)} x${item.quantity.toInt().toString().padLeft(2)} ${item.product.price.toInt().toString().padLeft(6)}\n',
+        ),
+      );
+    }
+
+    bytes.addAll(utf8.encode('---------------------------\n'));
+    // Large Font for Total
+    bytes.addAll([esc, 0x21, 0x30]); // Double height & width
+    bytes.addAll(utf8.encode('TOTAL: ${total.toInt()} IQD\n'));
+    bytes.addAll([esc, 0x21, 0x00]); // Reset font
+
+    // Feed and cut
+    bytes.addAll([esc, 0x64, 5]); // Feed 5 lines
+    bytes.addAll([gs, 0x56, 66, 0]); // Cut paper
+
+    return Uint8List.fromList(bytes);
   }
 
   Future<Uint8List> _generateTsplBytes(

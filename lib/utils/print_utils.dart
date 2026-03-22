@@ -23,6 +23,7 @@ class PrintUtils {
       context: context,
       builder: (ctx) {
         PrinterDevice? selectedDevice;
+        PrinterProtocol selectedProtocol = PrinterProtocol.escPos;
 
         return StatefulBuilder(
           builder: (context, setState) {
@@ -306,6 +307,99 @@ class PrintUtils {
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
+                              const SizedBox(height: 8),
+                              // Protocol Toggle
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade100,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                padding: const EdgeInsets.all(4),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: () => setState(
+                                          () => selectedProtocol =
+                                              PrinterProtocol.escPos,
+                                        ),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                selectedProtocol ==
+                                                    PrinterProtocol.escPos
+                                                ? AppColors.primary
+                                                : Colors.transparent,
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'وصل (ESC/POS)',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color:
+                                                  selectedProtocol ==
+                                                      PrinterProtocol.escPos
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight:
+                                                  selectedProtocol ==
+                                                      PrinterProtocol.escPos
+                                                  ? FontWeight.bold
+                                                  : FontWeight.normal,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: GestureDetector(
+                                        onTap: () => setState(
+                                          () => selectedProtocol =
+                                              PrinterProtocol.tspl,
+                                        ),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                selectedProtocol ==
+                                                    PrinterProtocol.tspl
+                                                ? AppColors.primary
+                                                : Colors.transparent,
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'لاصق (TSPL)',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color:
+                                                  selectedProtocol ==
+                                                      PrinterProtocol.tspl
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight:
+                                                  selectedProtocol ==
+                                                      PrinterProtocol.tspl
+                                                  ? FontWeight.bold
+                                                  : FontWeight.normal,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                               const SizedBox(height: 12),
                               if (isScanning)
                                 const Expanded(
@@ -437,6 +531,7 @@ class PrintUtils {
                         selectedDevice,
                         saleId,
                         null,
+                        selectedProtocol,
                       );
                     },
                     style: ElevatedButton.styleFrom(
@@ -470,6 +565,7 @@ class PrintUtils {
     PrinterDevice? device,
     int? saleId,
     String? networkIp,
+    PrinterProtocol protocol,
   ) async {
     try {
       await ref
@@ -480,6 +576,7 @@ class PrintUtils {
             selectedDevice: device,
             saleId: saleId,
             networkIp: networkIp,
+            protocol: protocol,
           );
     } catch (e) {
       if (context.mounted) {
