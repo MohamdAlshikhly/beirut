@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart';
 import '../providers/data_providers.dart';
 import 'package:enough_convert/enough_convert.dart';
+import 'package:image/image.dart' as img;
 
 enum PrinterProtocol { tspl, escPos }
 
@@ -26,7 +27,6 @@ class PrintingService {
     });
 
     try {
-      // Listen for a short duration to collect USB devices
       final stream = printerManager.discovery(type: PrinterType.usb);
       await for (final device in stream.timeout(const Duration(seconds: 4))) {
         Future.microtask(() {
@@ -40,15 +40,11 @@ class PrintingService {
       Future.microtask(() {
         if (devices.isEmpty) {
           logNotifier.add('انتهى البحث: لم يتم اكتشاف أي طابعة USB.');
-          logNotifier.add(
-            'نصيحة: تأكد من إزالة الطابعة من إعدادات الـ Mac (Printers & Scanners) لكي يتمكن البرنامج من الوصول إليها مباشرة.',
-          );
         } else {
           logNotifier.add('انتهى البحث: تم اكتشاف ${devices.length} طابعة.');
         }
       });
     } catch (e) {
-      // Timeout reached or other error, we return what we found
       Future.microtask(() {
         logNotifier.add('خروج من البحث: $e');
       });
@@ -65,15 +61,56 @@ class PrintingService {
     String? networkIp,
     PrinterProtocol protocol = PrinterProtocol.escPos,
   }) async {
-    // 1. Generate Content
-    Uint8List bytes;
-    if (protocol == PrinterProtocol.tspl) {
-      bytes = await _generateTsplBytes(cartItems, total, saleId: saleId);
+    // This method is now legacy, but kept for compatibility.
+    // It could potentially render a hidden widget to use printReceiptImage.
+    final List<int> bytes = [];
+    const esc = 0x1B;
+    const gs = 0x1D;
+
+    bytes.addAll([esc, 0x40]); // Init
+    bytes.addAll(utf8.encode('Dukan Beirut\nReceipt\n\n'));
+    if (saleId != null) bytes.addAll(utf8.encode('ID: #$saleId\n'));
+    bytes.addAll(utf8.encode('Total: ${total.toInt()} IQD\n'));
+    bytes.addAll([esc, 0x64, 3]); // Feed
+    bytes.addAll([gs, 0x56, 66, 0]); // Cut
+
+    await _sendBytesToPrinter(
+      Uint8List.fromList(bytes),
+      selectedDevice,
+      networkIp,
+    );
+  }
+
+  Future<void> printReceiptImage(
+    Uint8List imgBytes, {
+    PrinterDevice? selectedDevice,
+    String? networkIp,
+    PrinterProtocol protocol = PrinterProtocol.escPos,
+  }) async {
+    final img.Image? originalImage = img.decodeImage(imgBytes);
+    if (originalImage == null) return;
+
+    final processedImage = img.grayscale(originalImage);
+
+    List<int> bytes = [];
+    if (protocol == PrinterProtocol.escPos) {
+      bytes = _generateEscPosImageBytes(processedImage);
     } else {
-      bytes = await _generateEscPosBytes(cartItems, total, saleId: saleId);
+      bytes = _generateTsplImageBytes(processedImage);
     }
 
-    // 2. Connect and Send
+    await _sendBytesToPrinter(
+      Uint8List.fromList(bytes),
+      selectedDevice,
+      networkIp,
+    );
+  }
+
+  Future<void> _sendBytesToPrinter(
+    Uint8List bytes,
+    PrinterDevice? selectedDevice,
+    String? networkIp,
+  ) async {
     final printerManager = PrinterManager.instance;
 
     if (networkIp != null && networkIp.isNotEmpty) {
@@ -89,9 +126,7 @@ class PrintingService {
     PrinterDevice? device = selectedDevice;
     if (device == null) {
       final devices = await getAvailablePrinters();
-      if (devices.isEmpty) {
-        throw Exception('لم يتم العثور على طابعة مرتبطة عبر USB');
-      }
+      if (devices.isEmpty) return;
       device = devices.first;
     }
 
@@ -103,61 +138,77 @@ class PrintingService {
         vendorId: device.vendorId,
       ),
     );
-
     await printerManager.send(type: PrinterType.usb, bytes: bytes);
     await printerManager.disconnect(type: PrinterType.usb);
   }
 
-  Future<Uint8List> _generateEscPosBytes(
-    List<CartItem> items,
-    double total, {
-    int? saleId,
-  }) async {
-    final List<int> bytes = [];
-    // ESC/POS Commands
+  List<int> _generateEscPosImageBytes(img.Image image) {
+    List<int> bytes = [];
     const esc = 0x1B;
     const gs = 0x1D;
 
-    // Initialize printer
-    bytes.addAll([esc, 0x40]);
+    bytes.addAll([esc, 0x40]); // Init
+    bytes.addAll([esc, 0x61, 1]); // Center
 
-    // Align Center
-    bytes.addAll([esc, 0x61, 1]);
-    bytes.addAll(utf8.encode('Dukan Beirut\n'));
-    bytes.addAll(utf8.encode('Receipt Test\n'));
-    bytes.addAll(utf8.encode('---------------------------\n'));
+    int width = image.width;
+    int height = image.height;
+    int widthBytes = (width + 7) ~/ 8;
 
-    // Align Left
-    bytes.addAll([esc, 0x61, 0]);
-    if (saleId != null) {
-      bytes.addAll(utf8.encode('Invoice: #$saleId\n'));
+    bytes.addAll([gs, 0x76, 0x30, 0]);
+    bytes.add(widthBytes % 256);
+    bytes.add(widthBytes ~/ 256);
+    bytes.add(height % 256);
+    bytes.add(height ~/ 256);
+
+    for (int y = 0; y < height; y++) {
+      for (int xByte = 0; xByte < widthBytes; xByte++) {
+        int byte = 0;
+        for (int bit = 0; bit < 8; bit++) {
+          int x = xByte * 8 + bit;
+          if (x < width) {
+            final pixel = image.getPixel(x, y);
+            final luminance =
+                (0.299 * img.getRed(pixel) +
+                0.587 * img.getGreen(pixel) +
+                0.114 * img.getBlue(pixel));
+            if (luminance < 128) byte |= (0x80 >> bit);
+          }
+        }
+        bytes.add(byte);
+      }
     }
-    bytes.addAll(
-      utf8.encode(
-        'Date: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}\n',
-      ),
-    );
-    bytes.addAll(utf8.encode('---------------------------\n'));
 
-    for (var item in items) {
-      bytes.addAll(
-        utf8.encode(
-          '${item.product.name.padRight(15)} x${item.quantity.toInt().toString().padLeft(2)} ${item.product.price.toInt().toString().padLeft(6)}\n',
-        ),
-      );
+    bytes.addAll([esc, 0x64, 3, gs, 0x56, 66, 0]);
+    return bytes;
+  }
+
+  List<int> _generateTsplImageBytes(img.Image image) {
+    List<int> bytes = [];
+    int width = image.width;
+    int height = image.height;
+    int widthBytes = (width + 7) ~/ 8;
+
+    bytes.addAll(utf8.encode('CLS\r\nBITMAP 0,0,$widthBytes,$height,0,'));
+
+    for (int y = 0; y < height; y++) {
+      for (int xByte = 0; xByte < widthBytes; xByte++) {
+        int byte = 0;
+        for (int bit = 0; bit < 8; bit++) {
+          int x = xByte * 8 + bit;
+          if (x < width) {
+            final pixel = image.getPixel(x, y);
+            final luminance =
+                (0.299 * img.getRed(pixel) +
+                0.587 * img.getGreen(pixel) +
+                0.114 * img.getBlue(pixel));
+            if (luminance < 128) byte |= (0x80 >> bit);
+          }
+        }
+        bytes.add(byte);
+      }
     }
-
-    bytes.addAll(utf8.encode('---------------------------\n'));
-    // Large Font for Total
-    bytes.addAll([esc, 0x21, 0x30]); // Double height & width
-    bytes.addAll(utf8.encode('TOTAL: ${total.toInt()} IQD\n'));
-    bytes.addAll([esc, 0x21, 0x00]); // Reset font
-
-    // Feed and cut
-    bytes.addAll([esc, 0x64, 5]); // Feed 5 lines
-    bytes.addAll([gs, 0x56, 66, 0]); // Cut paper
-
-    return Uint8List.fromList(bytes);
+    bytes.addAll(utf8.encode('\r\nPRINT 1,1\r\n'));
+    return bytes;
   }
 
   Future<Uint8List> _generateTsplBytes(
@@ -167,20 +218,15 @@ class PrintingService {
   }) async {
     final currencyFormatter = NumberFormat('#,##0', 'en_US');
     final dateFormatter = DateFormat('yyyy-MM-dd HH:mm');
-
     StringBuffer tspl = StringBuffer();
 
-    // Calculate adaptive height: Header(200) + Items(40 each) + Footer(200)
     int height = 500 + (items.length * 40);
-
     tspl.writeln('SIZE 80 mm, ${height / 8} mm');
     tspl.writeln('GAP 0,0');
     tspl.writeln('DIRECTION 1');
     tspl.writeln('CLS');
 
     int y = 30;
-
-    // Shop Name
     tspl.writeln('TEXT 400, $y, "FONT001", 0, 2, 2, "دكان بيروت"');
     y += 60;
 
@@ -192,23 +238,12 @@ class PrintingService {
       'TEXT 40, $y, "FONT001", 0, 1, 1, "Date: ${dateFormatter.format(DateTime.now())}"',
     );
     y += 50;
-
     tspl.writeln('BAR 40, $y, 500, 2');
     y += 20;
 
-    // Items Header
-    tspl.writeln('TEXT 40, $y, "FONT001", 0, 1, 1, "Item"');
-    tspl.writeln('TEXT 320, $y, "FONT001", 0, 1, 1, "Qty"');
-    tspl.writeln('TEXT 450, $y, "FONT001", 0, 1, 1, "Price"');
-    y += 40;
-    tspl.writeln('BAR 40, $y, 500, 1');
-    y += 20;
-
     for (var item in items) {
-      // Shorten name if too long
       String name = item.product.name;
       if (name.length > 20) name = name.substring(0, 17) + '...';
-
       tspl.writeln('TEXT 40, $y, "FONT001", 0, 1, 1, "$name"');
       tspl.writeln('TEXT 320, $y, "FONT001", 0, 1, 1, "${item.quantity}"');
       tspl.writeln(
@@ -220,27 +255,15 @@ class PrintingService {
     y += 20;
     tspl.writeln('BAR 40, $y, 500, 2');
     y += 30;
-
     tspl.writeln(
       'TEXT 40, $y, "FONT001", 0, 2, 2, "TOTAL: ${currencyFormatter.format(total)} IQD"',
     );
-    y += 80;
-
-    tspl.writeln(
-      'TEXT 400, $y, "FONT001", 0, 1, 1, "دكان بيروت.. طعم الأصالة"',
-    );
-    y += 40;
-    tspl.writeln(
-      'TEXT 400, $y, "FONT001", 0, 1, 1, "شكراً لزيارتكم.. ننتظركم دائماً"',
-    );
-
     tspl.writeln('PRINT 1, 1');
 
     try {
       const codec = Windows1256Codec();
       return Uint8List.fromList(codec.encode(tspl.toString()));
     } catch (e) {
-      debugPrint('Encoding error, falling back to UTF-8: $e');
       return Uint8List.fromList(utf8.encode(tspl.toString()));
     }
   }
