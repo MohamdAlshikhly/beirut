@@ -46,6 +46,19 @@ subprojects {
     }
 }
 
+// FIX 3: Enforce consistent JVM Target for Java and Kotlin tasks
+subprojects {
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        kotlinOptions {
+            jvmTarget = "17"
+        }
+    }
+    tasks.withType<JavaCompile>().configureEach {
+        sourceCompatibility = "17"
+        targetCompatibility = "17"
+    }
+}
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
