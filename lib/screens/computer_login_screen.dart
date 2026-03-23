@@ -20,57 +20,70 @@ class ComputerLoginScreen extends ConsumerStatefulWidget {
 class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
   final String _sessionId = const Uuid().v4();
   bool _isLoggingIn = false;
-  Timer? _pollingTimer;
+  StreamSubscription? _realtimeSubscription;
 
   @override
   void initState() {
     super.initState();
-    _startPolling();
+    _setupRealtimeListener();
   }
 
-  void _startPolling() {
-    // Poll the database every 2 seconds to see if the mobile scanner
-    // assigned a user to this session_code. Highly robust fallback.
-    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
-      if (_isLoggingIn || !mounted) return;
+  void _setupRealtimeListener() {
+    final client = ref.read(supabaseProvider);
+    _realtimeSubscription = client
+        .from('sessions')
+        .stream(primaryKey: ['id'])
+        .eq('session_code', _sessionId)
+        .listen(
+          (data) async {
+            if (data.isEmpty || _isLoggingIn || !mounted) return;
 
-      final client = ref.read(supabaseProvider);
-      try {
-        final res = await client
-            .from('sessions')
-            .select()
-            .eq('session_code', _sessionId)
-            .limit(1);
+            setState(() => _isLoggingIn = true);
 
-        if (res.isNotEmpty) {
-          if (mounted) setState(() => _isLoggingIn = true);
+            try {
+              final sessionRow = data.first;
+              final userId = sessionRow['user_id'];
 
-          final sessionRow = res.first;
-          final userId = sessionRow['user_id'];
+              final userRes = await client
+                  .from('users')
+                  .select()
+                  .eq('id', userId)
+                  .single();
 
-          final userRes = await client
-              .from('users')
-              .select()
-              .eq('id', userId)
-              .single();
+              final user = AppUser.fromJson(userRes);
 
-          final user = AppUser.fromJson(userRes);
+              if (mounted) {
+                ref.read(authProvider.notifier).login(user);
 
-          timer.cancel(); // Stop polling when succeeded
-
-          if (mounted) {
-            ref.read(authProvider.notifier).login(user);
-          }
-        }
-      } catch (e) {
-        debugPrint('Polling Check Error: $e');
-      }
-    });
+                // Clean up: delete the session record after successful login to keep DB clean
+                client
+                    .from('sessions')
+                    .delete()
+                    .eq('session_code', _sessionId)
+                    .then((_) => debugPrint('Session cleaned up'))
+                    .catchError((e) => debugPrint('Session cleanup error: $e'));
+              }
+            } catch (e) {
+              debugPrint('Login Session Error: $e');
+              if (mounted) {
+                setState(() => _isLoggingIn = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('فشل تسجيل الدخول، يرجى المحاولة مرة أخرى'),
+                  ),
+                );
+              }
+            }
+          },
+          onError: (error) {
+            debugPrint('Realtime Stream Error: $error');
+          },
+        );
   }
 
   @override
   void dispose() {
-    _pollingTimer?.cancel();
+    _realtimeSubscription?.cancel();
     super.dispose();
   }
 
