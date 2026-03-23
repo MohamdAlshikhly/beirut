@@ -48,6 +48,29 @@ subprojects {
 
 // FIX 3: Enforce consistent JVM Target for Java and Kotlin tasks
 subprojects {
+    afterEvaluate {
+        val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
+        if (android != null) {
+            android.compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+            
+            // Handle both kotlinOptions (old way) and Kotlin DSL (new way)
+            val kotlinNamespace = "org.jetbrains.kotlin.gradle.dsl.KotlinJvmOptions"
+            val kotlinOptions = project.extensions.findByName("kotlinOptions")
+            if (kotlinOptions != null) {
+                try {
+                    val jvmTargetField = kotlinOptions.javaClass.getMethod("setJvmTarget", String::class.java)
+                    jvmTargetField.invoke(kotlinOptions, "17")
+                } catch (e: Exception) {
+                    // Fallback to task-based if extension modification fails
+                }
+            }
+        }
+    }
+    
+    // Backup: task-based enforcement
     tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
         kotlinOptions {
             jvmTarget = "17"
