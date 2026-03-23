@@ -17,6 +17,36 @@ subprojects {
 }
 
 subprojects {
+    afterEvaluate {
+        val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
+        if (android != null) {
+            // FIX 1: Set missing namespace
+            if (android.namespace == null) {
+                val defaultNamespace = "com.github.mohamdalshikhly.${project.name.replace("-", ".")}"
+                android.namespace = defaultNamespace
+                println("Fixed missing namespace for ${project.name} using $defaultNamespace")
+            }
+            
+            // FIX 2: Strip package attribute from AndroidManifest.xml if it exists
+            // This is required when using AGP 8.0+ with legacy plugins.
+            try {
+                val manifestFile = file("src/main/AndroidManifest.xml")
+                if (manifestFile.exists()) {
+                    val content = manifestFile.readText()
+                    if (content.contains("package=")) {
+                        val newContent = content.replace(Regex("package=\"[^\"]*\""), "")
+                        manifestFile.writeText(newContent)
+                        println("Successfully stripped package attribute from ${project.name}'s AndroidManifest.xml")
+                    }
+                }
+            } catch (e: Exception) {
+                println("Warning: Could not process manifest for ${project.name}: ${e.message}")
+            }
+        }
+    }
+}
+
+subprojects {
     project.evaluationDependsOn(":app")
 }
 
