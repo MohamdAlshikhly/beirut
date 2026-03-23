@@ -17,6 +17,8 @@ class Product {
   final double quantity;
   final int? categoryId;
   final String? imageUrl;
+  final int? baseUnitId;
+  final double baseUnitConversion;
 
   Product({
     required this.id,
@@ -27,6 +29,8 @@ class Product {
     required this.quantity,
     this.categoryId,
     this.imageUrl,
+    this.baseUnitId,
+    this.baseUnitConversion = 1.0,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) => Product(
@@ -40,6 +44,9 @@ class Product {
     quantity: (json['quantity'] as num?)?.toDouble() ?? 0.0,
     categoryId: json['category_id'],
     imageUrl: json['image_url'],
+    baseUnitId: json['base_unit_id'],
+    baseUnitConversion:
+        (json['base_unit_conversion'] as num?)?.toDouble() ?? 1.0,
   );
 
   Product copyWith({
@@ -51,6 +58,8 @@ class Product {
     double? quantity,
     int? categoryId,
     String? imageUrl,
+    int? baseUnitId,
+    double? baseUnitConversion,
   }) {
     return Product(
       id: id ?? this.id,
@@ -61,6 +70,8 @@ class Product {
       quantity: quantity ?? this.quantity,
       categoryId: categoryId ?? this.categoryId,
       imageUrl: imageUrl ?? this.imageUrl,
+      baseUnitId: baseUnitId ?? this.baseUnitId,
+      baseUnitConversion: baseUnitConversion ?? this.baseUnitConversion,
     );
   }
 }

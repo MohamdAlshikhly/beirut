@@ -301,7 +301,7 @@ class PrintUtils {
                                                     'المجموع الكلي',
                                                     style: TextStyle(
                                                       color: Colors.black,
-                                                      fontSize: 14,
+                                                      fontSize: 10,
                                                       fontWeight:
                                                           FontWeight.w900,
                                                     ),

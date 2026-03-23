@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/data_providers.dart';
 import '../utils/app_colors.dart';
-import '../services/local_database.dart';
 import '../services/sync_service.dart';
 
 class AddStockQuantityDialog extends ConsumerStatefulWidget {
@@ -31,67 +30,22 @@ class _AddStockQuantityDialogState
       }
 
       final isMobile = ref.read(isMobileProvider);
-      final supabase = ref.read(supabaseProvider);
 
-      // 1. Try Live Update (Always for Mobile, Try for Computer)
-      try {
-        final remoteProd = await supabase
-            .from('products')
-            .select('quantity')
-            .eq('id', widget.product.id)
-            .single();
-        final currentQty = (remoteProd['quantity'] as num).toDouble();
-        final updatedQty = currentQty + addedQty;
-
-        await supabase
-            .from('products')
-            .update({'quantity': updatedQty})
-            .eq('id', widget.product.id);
-
-        await supabase.from('stock_movements').insert({
-          'product_id': widget.product.id,
-          'change': addedQty,
-          'reason': 'تزويد المخزن يدوياً عبر مسح الباركود (Live)',
-          'is_synced': true,
-        });
-
-        _showSuccess(addedQty);
-        ref.invalidate(productsProvider);
-        return;
-      } catch (e) {
-        if (isMobile) {
-          throw 'فشل التحديث المباشر: $e';
-        }
-        debugPrint('Computer Live stock update failed, fallback to local: $e');
-      }
-
-      // 2. Offline Fallback (Computer Only)
-      final db = await LocalDatabase.instance.database;
-      final localProd = await db.query(
-        'products',
-        where: 'id = ?',
-        whereArgs: [widget.product.id],
-      );
-      if (localProd.isEmpty) throw 'المنتج غير موجود محلياً';
-
-      final currentQty = (localProd.first['quantity'] as num).toDouble();
-      await db.update(
-        'products',
-        {'quantity': currentQty + addedQty, 'is_synced': 0},
-        where: 'id = ?',
-        whereArgs: [widget.product.id],
-      );
-
-      await db.insert('stock_movements', {
-        'product_id': widget.product.id,
-        'change': addedQty,
-        'reason': 'تزويد المخزن يدوياً عبر مسح الباركود (Offline)',
-        'is_synced': 0,
-      });
+      // Use the centralized updateStockWithLinkage logic
+      await ref
+          .read(checkoutProvider)
+          .updateStockWithLinkage(
+            productId: widget.product.id,
+            change: addedQty,
+            reason: 'تزويد المخزن يدوياً عبر مسح الباركود',
+            isOnline: !isMobile || true, // Repository handles online check
+          );
 
       _showSuccess(addedQty);
       ref.invalidate(productsProvider);
-      ref.read(syncServiceProvider).syncUp();
+      if (!isMobile) {
+        ref.read(syncServiceProvider).syncUp();
+      }
     } catch (e) {
       debugPrint('Error updating stock: $e');
       if (mounted) {

@@ -23,6 +23,8 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   final _costPriceController = TextEditingController();
   final _qtyController = TextEditingController();
   int? _selectedCategoryId;
+  int? _selectedBaseUnitId;
+  final _conversionController = TextEditingController(text: '1.0');
   bool _isLoading = false;
   XFile? _pickedImage;
   final _picker = ImagePicker();
@@ -109,6 +111,9 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
             : 0.0,
         'category_id': _selectedCategoryId,
         'image_url': imageUrl,
+        'base_unit_id': _selectedBaseUnitId,
+        'base_unit_conversion':
+            double.tryParse(_conversionController.text) ?? 1.0,
         'is_synced': 0,
       });
 
@@ -309,6 +314,63 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'ربط الوحدات (اختياري):',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const Text(
+                    'مثال: إذا كان هذا المنتج عبارة عن صندوق، اختر "العلبة" كوحدة أساسية وضع معامل التحويل 24.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  ref
+                      .watch(productsProvider)
+                      .when(
+                        data: (products) {
+                          // Filter out potential circular references (though simple one-level is fine)
+                          return DropdownButtonFormField<int>(
+                            value: _selectedBaseUnitId,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'المنتج الأساسي (الوحدة الأصغر)',
+                              filled: true,
+                            ),
+                            items: [
+                              const DropdownMenuItem(
+                                value: null,
+                                child: Text('لا يوجد (منتج أساسي مفرد)'),
+                              ),
+                              ...products.map(
+                                (p) => DropdownMenuItem(
+                                  value: p.id,
+                                  child: Text(p.name),
+                                ),
+                              ),
+                            ],
+                            onChanged: (v) =>
+                                setState(() => _selectedBaseUnitId = v),
+                          );
+                        },
+                        loading: () => const LinearProgressIndicator(),
+                        error: (e, st) => const Text('Error loading products'),
+                      ),
+                  if (_selectedBaseUnitId != null) ...[
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _conversionController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'كم قطعة من الوحدة الأصغر يحتوي هذا المنتج؟',
+                        hintText: 'مثلاً: كارتون فيه 24 علبة تضع 24',
+                        filled: true,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 48),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(

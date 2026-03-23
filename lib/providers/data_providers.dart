@@ -405,6 +405,93 @@ class CheckoutRepository {
   final Ref ref;
   CheckoutRepository(this.ref);
 
+  Future<void> updateStockWithLinkage({
+    required int productId,
+    required double change,
+    required String reason,
+    bool isOnline = true,
+  }) async {
+    final supabase = ref.read(supabaseProvider);
+    final db = await LocalDatabase.instance.database;
+
+    // 1. Fetch products involved locally first to get linkage info
+    final localProds = await db.query('products');
+    final allProducts = localProds
+        .map((json) => Product.fromJson(json))
+        .toList();
+    final product = allProducts.firstWhere((p) => p.id == productId);
+
+    // List of updates to perform: {id: change}
+    Map<int, double> updates = {productId: change};
+
+    // Linkage: If this is a Box, update the Can
+    if (product.baseUnitId != null) {
+      updates[product.baseUnitId!] = change * product.baseUnitConversion;
+    }
+
+    // Reverse Linkage: If this is a Can, update all Boxes that link to it
+    for (var p in allProducts) {
+      if (p.baseUnitId == productId) {
+        updates[p.id] = change / p.baseUnitConversion;
+      }
+    }
+
+    // Execute Updates
+    for (var entry in updates.entries) {
+      final pid = entry.key;
+      final val = entry.value;
+
+      if (isOnline) {
+        try {
+          final res = await supabase
+              .from('products')
+              .select('quantity')
+              .eq('id', pid)
+              .single();
+          final current = (res['quantity'] as num).toDouble();
+          await supabase
+              .from('products')
+              .update({'quantity': current + val})
+              .eq('id', pid);
+          await supabase.from('stock_movements').insert({
+            'product_id': pid,
+            'change': val,
+            'reason': reason,
+            'is_synced': true,
+          });
+        } catch (e) {
+          debugPrint('Online stock update failed for $pid: $e');
+        }
+      }
+
+      // Always update local for consistency (sync will handle it later if offline)
+      try {
+        final localRes = await db.query(
+          'products',
+          where: 'id = ?',
+          whereArgs: [pid],
+        );
+        if (localRes.isNotEmpty) {
+          final current = (localRes.first['quantity'] as num).toDouble();
+          await db.update(
+            'products',
+            {'quantity': current + val, 'is_synced': isOnline ? 1 : 0},
+            where: 'id = ?',
+            whereArgs: [pid],
+          );
+          await db.insert('stock_movements', {
+            'product_id': pid,
+            'change': val,
+            'reason': reason,
+            'is_synced': isOnline ? 1 : 0,
+          });
+        }
+      } catch (e) {
+        debugPrint('Local stock update failed for $pid: $e');
+      }
+    }
+  }
+
   Future<void> _updateDrawerBalance(Database db, double amountChange) async {
     final res = await db.query('balance', orderBy: 'created_at DESC', limit: 1);
     int currentBal = 0;
@@ -462,17 +549,13 @@ class CheckoutRepository {
           'price': item.product.price,
         });
 
-        // Update Remote Stock directly
-        final remoteProd = await supabase
-            .from('products')
-            .select('quantity')
-            .eq('id', item.product.id)
-            .single();
-        final currentQty = (remoteProd['quantity'] as num).toDouble();
-        await supabase
-            .from('products')
-            .update({'quantity': currentQty - item.quantity})
-            .eq('id', item.product.id);
+        // Update Stock with Linkage (Remote)
+        await updateStockWithLinkage(
+          productId: item.product.id,
+          change: -item.quantity,
+          reason: 'بيع في فاتورة #$saleId (Live)',
+          isOnline: true,
+        );
       }
 
       if (paymentType == 'cash') {
@@ -619,27 +702,13 @@ class CheckoutRepository {
             }
           }
 
-          final currentProd = (await db.query(
-            'products',
-            columns: ['quantity'],
-            where: 'id = ?',
-            whereArgs: [productId],
-          )).first;
-          final updatedStock =
-              (currentProd['quantity'] as num).toDouble() - diff;
-          await db.update(
-            'products',
-            {'quantity': updatedStock},
-            where: 'id = ?',
-            whereArgs: [productId],
+          // Update Stock with Linkage (Local only, sync will propagate)
+          await updateStockWithLinkage(
+            productId: productId,
+            change: -diff,
+            reason: 'تعديل فاتورة #$saleId',
+            isOnline: false,
           );
-
-          await db.insert('stock_movements', {
-            'product_id': productId,
-            'change': -diff,
-            'reason': 'تعديل فاتورة #$saleId',
-            'is_synced': 0,
-          });
         }
       }
 
@@ -679,28 +748,15 @@ class CheckoutRepository {
       );
       for (var item in items) {
         final productId = item['product_id'] as int;
-        final qty = item['quantity'] as int;
+        final qty = (item['quantity'] as num).toDouble();
 
-        final prodRes = (await db.query(
-          'products',
-          columns: ['quantity'],
-          where: 'id = ?',
-          whereArgs: [productId],
-        )).first;
-        final currentQty = (prodRes['quantity'] as num).toDouble();
-        await db.update(
-          'products',
-          {'quantity': currentQty + qty},
-          where: 'id = ?',
-          whereArgs: [productId],
+        // Update Stock with Linkage (Local only, sync will propagate)
+        await updateStockWithLinkage(
+          productId: productId,
+          change: qty,
+          reason: 'حذف فاتورة #$saleId',
+          isOnline: false,
         );
-
-        await db.insert('stock_movements', {
-          'product_id': productId,
-          'change': qty,
-          'reason': 'حذف فاتورة #$saleId',
-          'is_synced': 0,
-        });
       }
 
       await db.delete('sale_items', where: 'sale_id = ?', whereArgs: [saleId]);

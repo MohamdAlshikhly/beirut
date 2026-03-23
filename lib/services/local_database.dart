@@ -27,7 +27,7 @@ class LocalDatabase {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -53,6 +53,14 @@ class LocalDatabase {
     }
     if (oldVersion < 5) {
       await db.execute('ALTER TABLE products ADD COLUMN image_url TEXT');
+    }
+    if (oldVersion < 6) {
+      await db.execute(
+        'ALTER TABLE products ADD COLUMN base_unit_id INTEGER REFERENCES products(id)',
+      );
+      await db.execute(
+        'ALTER TABLE products ADD COLUMN base_unit_conversion REAL DEFAULT 1.0',
+      );
     }
   }
 
@@ -93,10 +101,13 @@ class LocalDatabase {
       cost_price REAL,
       quantity REAL DEFAULT 0,
       category_id INTEGER,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       image_url TEXT,
+      base_unit_id INTEGER,
+      base_unit_conversion REAL DEFAULT 1.0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       is_synced INTEGER DEFAULT 0,
-      FOREIGN KEY (category_id) REFERENCES categories (id)
+      FOREIGN KEY (category_id) REFERENCES categories (id),
+      FOREIGN KEY (base_unit_id) REFERENCES products (id)
     )
     ''');
 
