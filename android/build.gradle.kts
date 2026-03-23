@@ -20,23 +20,32 @@ subprojects {
     afterEvaluate {
         val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
         if (android != null) {
-            // FIX 1: Set missing namespace ONLY if it is null
-            if (android.namespace == null) {
-                val defaultNamespace = "com.github.mohamdalshikhly.${project.name.replace("-", ".")}"
-                android.namespace = defaultNamespace
-                println("Fixed missing namespace for ${project.name} using $defaultNamespace")
-            }
-            
-            // FIX 2: Strip package attribute from AndroidManifest.xml if it exists
-            // This is required when using AGP 8.0+ with legacy plugins.
+            // FIX 1 & 2: Extract original package and set as namespace, then strip package
             try {
                 val manifestFile = file("src/main/AndroidManifest.xml")
                 if (manifestFile.exists()) {
-                    val content = manifestFile.readText()
-                    if (content.contains("package=")) {
+                    var content = manifestFile.readText()
+                    
+                    // 1. Find the package name
+                    val packageMatcher = Regex("package=\"([^\"]*)\"").find(content)
+                    val originalPackage = packageMatcher?.groupValues?.get(1)
+                    
+                    if (originalPackage != null) {
+                        // 2. Set as namespace so R class is generated in the correct place
+                        android.namespace = originalPackage
+                        println("Syncing namespace for ${project.name} with $originalPackage")
+                        
+                        // 3. Strip package attribute to satisfy AGP 8.0+
                         val newContent = content.replace(Regex("package=\"[^\"]*\""), "")
-                        manifestFile.writeText(newContent)
-                        println("Successfully stripped package attribute from ${project.name}'s AndroidManifest.xml")
+                        if (content != newContent) {
+                            manifestFile.writeText(newContent)
+                            println("Successfully stripped package attribute from ${project.name}'s AndroidManifest.xml")
+                        }
+                    } else if (android.namespace == null) {
+                        // Fallback if no package attribute found
+                        val defaultNamespace = "com.github.mohamdalshikhly.${project.name.replace("-", ".")}"
+                        android.namespace = defaultNamespace
+                        println("Fixed missing namespace for ${project.name} using $defaultNamespace")
                     }
                 }
             } catch (e: Exception) {
