@@ -77,8 +77,9 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
       if (mounted) {
         setState(() => _isLoggingIn = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('فشل تسجيل الدخول، يرجى المحاولة مرة أخرى'),
+          SnackBar(
+            content: Text('فشل تسجيل الدخول: $e'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -113,7 +114,10 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
       debugPrint('Manual Check Error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('حدث خطأ أثناء التحقق من الجلسة')),
+          SnackBar(
+            content: Text('حدث خطأ في التحقق: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
