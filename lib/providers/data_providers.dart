@@ -100,29 +100,27 @@ final balanceProvider = StreamProvider<int>((ref) {
 
   return (() async* {
     ref.watch(dbUpdateTriggerProvider);
-    try {
-      // 1. Try Live (Online First)
-      final response = await supabase
-          .from('balance')
-          .select('currentBalance')
-          .order('created_at', ascending: false)
-          .limit(1)
-          .maybeSingle();
-      yield response?['currentBalance'] as int? ?? 0;
+    final isOnline = ref.read(connectivityProvider).value ?? true;
+    final isOffline = !isOnline;
 
-      // 2. Start Real-time Stream if Online was successful
-      yield* supabase
-          .from('balance')
-          .stream(primaryKey: ['id'])
-          .order('created_at', ascending: false)
-          .limit(1)
-          .map(
-            (list) =>
-                list.isEmpty ? 0 : list.first['currentBalance'] as int? ?? 0,
-          );
+    try {
+      if (!isOffline) {
+        // 1. Try Live (Online First)
+        final response = await supabase
+            .from('balance')
+            .select('currentBalance')
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle()
+            .timeout(const Duration(seconds: 3));
+
+        yield response?['currentBalance'] as int? ?? 0;
+        return;
+      }
+      throw Exception('Offline');
     } catch (e) {
-      debugPrint('Live balance fetch failed, falling back to local: $e');
-      // 3. Fallback to Local (Offline)
+      debugPrint('Desktop Balance fetch failed/offline: $e');
+      // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'balance',
@@ -149,14 +147,24 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
 
   return (() async* {
     ref.watch(dbUpdateTriggerProvider);
+    final isOnline = ref.read(connectivityProvider).value ?? true;
+    final isOffline = !isOnline;
+
     try {
-      // Try Supabase Stream (Online First)
-      yield* supabase
-          .from('categories')
-          .stream(primaryKey: ['id'])
-          .map((list) => list.map((json) => Category.fromJson(json)).toList());
+      if (!isOffline) {
+        // Try Supabase Stream (Online First)
+        yield* supabase
+            .from('categories')
+            .stream(primaryKey: ['id'])
+            .timeout(const Duration(seconds: 3))
+            .map(
+              (list) => list.map((json) => Category.fromJson(json)).toList(),
+            );
+        return; // Success, don't proceed to local fallback
+      }
+      throw Exception('Offline');
     } catch (e) {
-      debugPrint('Desktop Category Stream failed, fallback to local: $e');
+      debugPrint('Desktop Categories Stream failed/offline: $e');
       // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query('categories');
@@ -178,14 +186,22 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
 
   return (() async* {
     ref.watch(dbUpdateTriggerProvider);
+    final isOnline = ref.read(connectivityProvider).value ?? true;
+    final isOffline = !isOnline;
+
     try {
-      // Try Supabase Stream (Online First)
-      yield* supabase
-          .from('products')
-          .stream(primaryKey: ['id'])
-          .map((list) => list.map((json) => Product.fromJson(json)).toList());
+      if (!isOffline) {
+        // Try Supabase Stream (Online First)
+        yield* supabase
+            .from('products')
+            .stream(primaryKey: ['id'])
+            .timeout(const Duration(seconds: 3))
+            .map((list) => list.map((json) => Product.fromJson(json)).toList());
+        return; // Success
+      }
+      throw Exception('Offline');
     } catch (e) {
-      debugPrint('Desktop Product Stream failed, fallback to local: $e');
+      debugPrint('Desktop Product Stream failed/offline: $e');
       // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query('products');
@@ -199,17 +215,24 @@ final todaySalesProvider = StreamProvider<double>((ref) {
   final supabase = ref.read(supabaseProvider);
   final now = DateTime.now();
   final startOfDay = DateFormat('yyyy-MM-dd').format(now);
+  final user = ref.watch(authProvider); // Added for cashier_id
+  final today = DateFormat(
+    'yyyy-MM-dd',
+  ).format(DateTime.now()); // Added for local query
 
   if (isMobile) {
     debugPrint('DEBUG: MOBILE REAL-TIME STREAM FOR TODAY SALES');
     return supabase
         .from('sales')
         .stream(primaryKey: ['id'])
-        .gte('created_at', startOfDay)
+        .timeout(const Duration(seconds: 3)) // Added timeout
         .map((list) {
           double sum = 0;
           for (var sale in list) {
-            sum += (sale['total_price'] as num).toDouble();
+            if (sale['created_at'].toString().startsWith(startOfDay) &&
+                sale['cashier_id'] == user?.id) {
+              sum += (sale['total_price'] as num).toDouble();
+            }
           }
           return sum;
         });
@@ -219,12 +242,21 @@ final todaySalesProvider = StreamProvider<double>((ref) {
 
   return (() async* {
     ref.watch(dbUpdateTriggerProvider);
+    final isOnline =
+        ref.read(connectivityProvider).value ?? true; // Added for desktop logic
+
     try {
+      if (!isOnline) {
+        // Check connectivity for initial fetch
+        throw Exception('Offline');
+      }
       // 1. Try Live (Online First)
       final res = await supabase
           .from('sales')
           .select('total_price')
-          .gte('created_at', startOfDay);
+          .gte('created_at', startOfDay)
+          .eq('cashier_id', user?.id ?? -1) // Added cashier_id
+          .timeout(const Duration(seconds: 3)); // Added timeout
       double sum = 0;
       for (var sale in res) {
         sum += (sale['total_price'] as num).toDouble();
@@ -235,21 +267,26 @@ final todaySalesProvider = StreamProvider<double>((ref) {
       yield* supabase
           .from('sales')
           .stream(primaryKey: ['id'])
-          .gte('created_at', startOfDay)
+          .timeout(const Duration(seconds: 3)) // Added timeout
           .map((list) {
             double sum = 0;
             for (var sale in list) {
-              sum += (sale['total_price'] as num).toDouble();
+              if (sale['created_at'].toString().startsWith(startOfDay) &&
+                  sale['cashier_id'] == user?.id) {
+                sum += (sale['total_price'] as num).toDouble();
+              }
             }
             return sum;
           });
     } catch (e) {
-      debugPrint('Live today sales fetch failed, falling back to local: $e');
+      debugPrint('Live sales total fetch failed, fallback to local: $e');
       // 3. Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
-        where: "date(created_at) = date('now', 'utc')",
+        where:
+            "date(created_at) = date(?) AND cashier_id = ?", // Modified for cashier_id and today
+        whereArgs: [today, user?.id ?? -1], // Modified for cashier_id and today
       );
       double sum = 0;
       for (var sale in response) {
@@ -265,44 +302,74 @@ final todaySalesCountProvider = StreamProvider<int>((ref) {
   final supabase = ref.read(supabaseProvider);
   final now = DateTime.now();
   final startOfDay = DateFormat('yyyy-MM-dd').format(now);
+  final user = ref.watch(authProvider); // Added for cashier_id
+  final today = DateFormat(
+    'yyyy-MM-dd',
+  ).format(DateTime.now()); // Added for local query
 
   if (isMobile) {
     debugPrint('DEBUG: MOBILE REAL-TIME STREAM FOR TODAY SALES COUNT');
     return supabase
         .from('sales')
         .stream(primaryKey: ['id'])
-        .gte('created_at', startOfDay)
-        .map((list) => list.length);
+        .timeout(const Duration(seconds: 3)) // Added timeout
+        .map(
+          (list) => list
+              .where(
+                (sale) =>
+                    sale['created_at'].toString().startsWith(startOfDay) &&
+                    sale['cashier_id'] == user?.id,
+              )
+              .length,
+        );
   }
 
   ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     ref.watch(dbUpdateTriggerProvider);
+    final isOnline =
+        ref.read(connectivityProvider).value ?? true; // Added for desktop logic
+
     try {
+      if (!isOnline) {
+        // Check connectivity for initial fetch
+        throw Exception('Offline');
+      }
       // 1. Try Live (Online First)
       final response = await supabase
           .from('sales')
           .select('id')
-          .gte('created_at', startOfDay);
+          .gte('created_at', startOfDay)
+          .eq('cashier_id', user?.id ?? -1) // Added cashier_id
+          .timeout(const Duration(seconds: 3)); // Added timeout
       yield response.length;
 
       // 2. Stream for live updates
       yield* supabase
           .from('sales')
           .stream(primaryKey: ['id'])
-          .gte('created_at', startOfDay)
-          .map((list) => list.length);
+          .timeout(const Duration(seconds: 3)) // Added timeout
+          .map(
+            (list) => list
+                .where(
+                  (sale) =>
+                      sale['created_at'].toString().startsWith(startOfDay) &&
+                      sale['cashier_id'] == user?.id,
+                )
+                .length,
+          );
     } catch (e) {
       debugPrint('Live sales count fetch failed, fallback to local: $e');
       // 3. Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
-      final response = await db.query(
+      final res = await db.query(
         'sales',
         columns: ['id'],
-        where: "date(created_at) = date('now', 'utc')",
+        where: "date(created_at) = date(?) AND cashier_id = ?",
+        whereArgs: [today, user?.id ?? -1],
       );
-      yield response.length;
+      yield res.length;
     }
   })();
 });
@@ -560,9 +627,9 @@ class CheckoutRepository {
     ref.invalidate(balanceProvider);
   }
 
-  Future<bool> processCheckout(String paymentType) async {
+  Future<int?> processCheckout(String paymentType) async {
     final cartItems = ref.read(cartProvider);
-    if (cartItems.isEmpty) return false;
+    if (cartItems.isEmpty) return null;
 
     final supabase = ref.read(supabaseProvider);
     final total = ref.read(cartProvider.notifier).total;
@@ -644,7 +711,7 @@ class CheckoutRepository {
       ref.invalidate(productsProvider);
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
-      return true;
+      return saleId;
     } catch (onlineError) {
       debugPrint('Online checkout failed: $onlineError');
 
@@ -683,20 +750,20 @@ class CheckoutRepository {
         ref.invalidate(productsProvider);
         ref.invalidate(todaySalesProvider);
         ref.invalidate(todaySalesCountProvider);
-        return true;
+        return saleId;
       } catch (offlineError) {
         debugPrint('Offline checkout also failed: $offlineError');
-        return false;
+        return null;
       }
     }
   }
 
-  Future<bool> updateSale(String paymentType) async {
+  Future<int?> updateSale(String paymentType) async {
     final cartItems = ref.read(cartProvider);
     final originalItems = ref.read(originalCartItemsProvider);
     final saleId = ref.read(editingSaleIdProvider);
 
-    if (saleId == null || cartItems.isEmpty) return false;
+    if (saleId == null || cartItems.isEmpty) return null;
 
     final supabase = ref.read(supabaseProvider);
     final db = await LocalDatabase.instance.database;
@@ -754,15 +821,22 @@ class CheckoutRepository {
       }
 
       // 4. Update Items (Delete and Re-insert for Online Simplicity)
-      await supabase.from('sale_items').delete().eq('sale_id', saleId);
-      for (final item in cartItems) {
-        await supabase.from('sale_items').insert({
-          'sale_id': saleId,
-          'product_id': item.product.id,
-          'quantity': item.quantity.toInt(),
-          'price': item.product.price,
-        });
+      bool onlineSuccess = false;
+      try {
+        await supabase.from('sale_items').delete().eq('sale_id', saleId);
+        for (final item in cartItems) {
+          await supabase.from('sale_items').insert({
+            'sale_id': saleId,
+            'product_id': item.product.id,
+            'quantity': item.quantity.toInt(),
+            'price': item.product.price,
+          });
+        }
+        onlineSuccess = true;
+      } catch (e) {
+        debugPrint('Online update failed: $e');
       }
+      if (!onlineSuccess) return null;
 
       // 5. Reconcile Stock (Diff calculation)
       Map<int, CartItem> originalMap = {
@@ -819,7 +893,7 @@ class CheckoutRepository {
       ref.invalidate(productsProvider);
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
-      return true;
+      return saleId;
     } catch (onlineError) {
       debugPrint('Online sale update failed: $onlineError');
       // OFFLINE FALLBACK
@@ -830,7 +904,7 @@ class CheckoutRepository {
           where: 'id = ?',
           whereArgs: [saleId],
         ));
-        if (existingSaleRes.isEmpty) return false;
+        if (existingSaleRes.isEmpty) return null;
         final existingSale = existingSaleRes.first;
 
         final oldTotal = (existingSale['total_price'] as num).toDouble();
@@ -908,10 +982,10 @@ class CheckoutRepository {
         ref.invalidate(productsProvider);
         ref.invalidate(todaySalesProvider);
         ref.invalidate(todaySalesCountProvider);
-        return true;
+        return saleId;
       } catch (offlineError) {
         debugPrint('Offline sale update also failed: $offlineError');
-        return false;
+        return null;
       }
     }
   }

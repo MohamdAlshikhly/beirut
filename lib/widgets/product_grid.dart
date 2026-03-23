@@ -76,30 +76,34 @@ class ProductGrid extends ConsumerWidget {
               Expanded(
                 flex: 2,
                 child: categoriesAsync.when(
-                  data: (categories) => SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        _CategoryChip(
-                          title: 'الكل',
-                          isSelected: selectedCategory == null,
-                          onTap: () => ref
-                              .read(selectedCategoryProvider.notifier)
-                              .set(null),
-                        ),
-                        ...categories.map(
-                          (cat) => Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
-                            child: _CategoryChip(
-                              title: cat.name,
-                              isSelected: selectedCategory == cat.id,
-                              onTap: () => ref
-                                  .read(selectedCategoryProvider.notifier)
-                                  .set(cat.id),
+                  data: (categories) => Scrollbar(
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          _CategoryChip(
+                            title: 'الكل',
+                            isSelected: selectedCategory == null,
+                            onTap: () => ref
+                                .read(selectedCategoryProvider.notifier)
+                                .set(null),
+                          ),
+                          ...categories.map(
+                            (cat) => Padding(
+                              padding: const EdgeInsets.only(right: 8.0),
+                              child: _CategoryChip(
+                                title: cat.name,
+                                isSelected: selectedCategory == cat.id,
+                                onTap: () => ref
+                                    .read(selectedCategoryProvider.notifier)
+                                    .set(cat.id),
+                              ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                   loading: () => SingleChildScrollView(

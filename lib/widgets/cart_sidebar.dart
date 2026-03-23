@@ -151,14 +151,17 @@ class CartSidebar extends ConsumerWidget {
                       ],
                     ),
                   )
-                : ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: cartItems.length,
-                    separatorBuilder: (c, i) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final item = cartItems[index];
-                      return _CartItemTile(item: item);
-                    },
+                : Scrollbar(
+                    thumbVisibility: true,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: cartItems.length,
+                      separatorBuilder: (c, i) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final item = cartItems[index];
+                        return _CartItemTile(item: item);
+                      },
+                    ),
                   ),
           ),
           Container(
@@ -260,9 +263,11 @@ class CartSidebar extends ConsumerWidget {
           title: Text(
             method == 'cash' ? 'تأكيد الدفع نقداً' : 'تأكيد الدفع بالبطاقة',
           ),
-          content: const Text(
-            'هل أنت متأكد من إتمام هذه العملية؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء',
-            style: TextStyle(fontSize: 18),
+          content: Text(
+            method == 'cash'
+                ? 'هل أنت متأكد من إتمام وطباعة هذه العملية نقداً؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء'
+                : 'هل أنت متأكد من إتمام هذه العملية؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء',
+            style: const TextStyle(fontSize: 18),
           ),
           actions: [
             TextButton(
@@ -296,18 +301,18 @@ class CartSidebar extends ConsumerWidget {
     );
 
     final editingSaleId = ref.read(editingSaleIdProvider);
-    bool success;
+    int? saleId;
 
     if (editingSaleId != null) {
-      success = await ref.read(checkoutProvider).updateSale(method);
+      saleId = await ref.read(checkoutProvider).updateSale(method);
     } else {
-      success = await ref.read(checkoutProvider).processCheckout(method);
+      saleId = await ref.read(checkoutProvider).processCheckout(method);
     }
 
     if (context.mounted) {
       Navigator.of(context).pop();
 
-      if (success) {
+      if (saleId != null) {
         if (onPaymentSuccess != null) {
           onPaymentSuccess!();
         }
@@ -315,7 +320,7 @@ class CartSidebar extends ConsumerWidget {
         // Show Print Receipt Dialog only on Computer
         final isMobile = ref.read(isMobileProvider);
         if (!isMobile) {
-          _showPrintDialog(context, ref, cartItems, total);
+          _showPrintDialog(context, ref, cartItems, total, saleId: saleId);
         }
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -339,14 +344,15 @@ class CartSidebar extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref,
     List<CartItem> cartItems,
-    double total,
-  ) {
+    double total, {
+    int? saleId,
+  }) {
     PrintUtils.showPrintDialog(
       context: context,
       ref: ref,
       cartItems: cartItems,
       total: total,
-      saleId: ref.read(editingSaleIdProvider),
+      saleId: saleId ?? ref.read(editingSaleIdProvider),
     );
   }
 }
@@ -423,11 +429,19 @@ class _CartItemTile extends ConsumerWidget {
                         .read(cartProvider.notifier)
                         .updateQuantity(item.product.id, item.quantity - 1),
                   ),
-                  Text(
-                    '${item.quantity}',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+                  InkWell(
+                    onTap: () => _showQuantityDialog(context, ref, item),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(
+                        '${item.quantity}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                          color: AppColors.primary,
+                        ),
+                      ),
                     ),
                   ),
                   IconButton(
@@ -491,6 +505,70 @@ class _CartItemTile extends ConsumerWidget {
                   ),
                 );
               }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showQuantityDialog(BuildContext context, WidgetRef ref, CartItem item) {
+    final controller = TextEditingController(text: '${item.quantity}');
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: controller.text.length,
+    );
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديل الكمية'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(item.product.name, style: const TextStyle(fontSize: 14)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                suffixText: 'وحدة',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onSubmitted: (val) {
+                final newQty = double.tryParse(val) ?? item.quantity;
+                ref
+                    .read(cartProvider.notifier)
+                    .updateQuantity(item.product.id, newQty);
+                Navigator.pop(ctx);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newQty = double.tryParse(controller.text) ?? item.quantity;
+              ref
+                  .read(cartProvider.notifier)
+                  .updateQuantity(item.product.id, newQty);
+              Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text(
+              'تعديل',
+              style: TextStyle(color: AppColors.secondary),
             ),
           ),
         ],

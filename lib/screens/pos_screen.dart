@@ -9,6 +9,7 @@ import '../widgets/cart_sidebar.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../utils/app_colors.dart';
 import '../services/sync_service.dart';
+import '../utils/print_utils.dart';
 
 class PosScreen extends ConsumerStatefulWidget {
   const PosScreen({super.key});
@@ -124,9 +125,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             return KeyEventResult.ignored;
           },
           child: AlertDialog(
-            title: Text('تأكيد الدفع نقداً'),
+            title: const Text('تأكيد الدفع نقداً'),
             content: const Text(
-              'هل أنت متأكد من إتمام هذه العملية؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء',
+              'هل أنت متأكد من إتمام وطباعة هذه العملية نقداً؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء',
               style: TextStyle(fontSize: 18),
             ),
             actions: [
@@ -160,6 +161,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   }
 
   void _processPaymentGlobally(String method) async {
+    final cartItems = ref.read(cartProvider);
+    final total = ref.read(cartProvider.notifier).total;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -167,18 +171,21 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
 
     final editingSaleId = ref.read(editingSaleIdProvider);
-    bool success;
+    int? saleId;
 
     if (editingSaleId != null) {
-      success = await ref.read(checkoutProvider).updateSale(method);
+      saleId = await ref.read(checkoutProvider).updateSale(method);
     } else {
-      success = await ref.read(checkoutProvider).processCheckout(method);
+      saleId = await ref.read(checkoutProvider).processCheckout(method);
     }
 
     if (mounted) {
       Navigator.of(context).pop();
 
-      if (success) {
+      if (saleId != null) {
+        // Show Print Receipt Dialog only on Computer
+        _showPrintDialog(context, ref, cartItems, total, saleId: saleId);
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('تم إتمام العملية بنجاح! ✔️'),
@@ -194,6 +201,22 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         );
       }
     }
+  }
+
+  void _showPrintDialog(
+    BuildContext context,
+    WidgetRef ref,
+    List<CartItem> cartItems,
+    double total, {
+    int? saleId,
+  }) {
+    PrintUtils.showPrintDialog(
+      context: context,
+      ref: ref,
+      cartItems: cartItems,
+      total: total,
+      saleId: saleId ?? ref.read(editingSaleIdProvider),
+    );
   }
 
   @override

@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_pos_printer_platform/flutter_pos_printer_platform.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../services/printing_service.dart';
 import '../utils/app_colors.dart';
 import '../providers/data_providers.dart';
@@ -156,123 +157,98 @@ class PrintUtils {
                                                   ),
                                                 ],
                                               ),
-                                              const SizedBox(height: 25),
-                                              const Divider(
-                                                color: Colors.black,
-                                              ),
-                                              const SizedBox(height: 15),
-                                              Row(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment
-                                                        .spaceBetween,
-                                                children: [
-                                                  Text(
-                                                    'التاريخ: ${DateTime.now().toString().substring(0, 16)}',
-                                                    style: const TextStyle(
-                                                      fontSize: 10,
-                                                      color: Colors.black54,
+                                              const SizedBox(height: 5),
+                                              Container(
+                                                width: double.infinity,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 4,
                                                     ),
+                                                decoration: BoxDecoration(
+                                                  border: Border.all(
+                                                    color: Colors.black,
                                                   ),
-                                                  if (saleId != null)
-                                                    Text(
-                                                      '#$saleId',
-                                                      style: const TextStyle(
-                                                        fontSize: 12,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        color: Colors.black,
-                                                      ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  children: [
+                                                    Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        Text(
+                                                          'التاريخ: ${DateTime.now().toString().substring(0, 10)}',
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 10,
+                                                                color: Colors
+                                                                    .black,
+                                                              ),
+                                                        ),
+                                                        Text(
+                                                          'الوقت: ${DateTime.now().toString().substring(11, 16)}',
+                                                          style:
+                                                              const TextStyle(
+                                                                fontSize: 10,
+                                                                color: Colors
+                                                                    .black,
+                                                              ),
+                                                        ),
+                                                      ],
                                                     ),
-                                                ],
+                                                    if (saleId != null)
+                                                      Text(
+                                                        '# $saleId',
+                                                        style: const TextStyle(
+                                                          fontSize: 14,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                          color: Colors.black,
+                                                        ),
+                                                      ),
+                                                  ],
+                                                ),
                                               ),
-                                              const SizedBox(height: 15),
-                                              const Divider(
-                                                color: Colors.black,
-                                              ),
-                                              const SizedBox(height: 15),
-                                              const Row(
-                                                children: [
-                                                  Expanded(
-                                                    flex: 3,
-                                                    child: Text(
-                                                      'الصنف',
-                                                      style: TextStyle(
-                                                        fontSize: 11,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        color: Colors.black,
-                                                      ),
-                                                    ),
+                                              const SizedBox(height: 5),
+                                              Container(
+                                                decoration: BoxDecoration(
+                                                  border: Border.all(
+                                                    color: Colors.black,
+                                                    width: 0.7,
                                                   ),
-                                                  Expanded(
-                                                    child: Text(
-                                                      'الكمية',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: TextStyle(
-                                                        fontSize: 11,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                        color: Colors.black,
-                                                      ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                child: ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                  child: Table(
+                                                    columnWidths: const {
+                                                      0: FlexColumnWidth(3),
+                                                      1: FlexColumnWidth(1),
+                                                      2: FlexColumnWidth(1.5),
+                                                    },
+                                                    border: TableBorder.all(
+                                                      color: Colors.black,
+                                                      width: 1,
                                                     ),
-                                                  ),
-                                                  Expanded(
-                                                    child: Text(
-                                                      'السعر',
-                                                      textAlign:
-                                                          TextAlign.right,
-                                                      style: TextStyle(
-                                                        fontSize: 11,
-                                                        color: Colors.black,
-                                                        fontWeight:
-                                                            FontWeight.bold,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 10),
-                                              ...itemsToPrint.map(
-                                                (item) => Padding(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        vertical: 4,
-                                                      ),
-                                                  child: Row(
                                                     children: [
-                                                      Expanded(
-                                                        flex: 3,
-                                                        child: Text(
-                                                          item.product.name,
-                                                          style:
-                                                              const TextStyle(
-                                                                fontSize: 11,
-                                                                color: Colors
-                                                                    .black,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                      Expanded(
-                                                        child: Text(
-                                                          'x${item.quantity.toInt()}',
-                                                          textAlign:
-                                                              TextAlign.center,
-                                                          style:
-                                                              const TextStyle(
-                                                                color: Colors
-                                                                    .black,
-                                                                fontSize: 11,
-                                                              ),
-                                                        ),
-                                                      ),
-                                                      Expanded(
-                                                        child: Text(
-                                                          '${(item.product.price * item.quantity).toInt()}',
-                                                          textAlign:
-                                                              TextAlign.right,
-                                                          style:
-                                                              const TextStyle(
+                                                      const TableRow(
+                                                        children: [
+                                                          Padding(
+                                                            padding:
+                                                                EdgeInsets.all(
+                                                                  4.0,
+                                                                ),
+                                                            child: Text(
+                                                              'الصنف',
+                                                              style: TextStyle(
                                                                 fontSize: 11,
                                                                 color: Colors
                                                                     .black,
@@ -280,56 +256,221 @@ class PrintUtils {
                                                                     FontWeight
                                                                         .bold,
                                                               ),
+                                                            ),
+                                                          ),
+                                                          Padding(
+                                                            padding:
+                                                                EdgeInsets.all(
+                                                                  4.0,
+                                                                ),
+                                                            child: Text(
+                                                              'الكمية',
+                                                              textAlign:
+                                                                  TextAlign
+                                                                      .center,
+                                                              style: TextStyle(
+                                                                fontSize: 9,
+                                                                color: Colors
+                                                                    .black,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          Padding(
+                                                            padding:
+                                                                EdgeInsets.all(
+                                                                  4.0,
+                                                                ),
+                                                            child: Text(
+                                                              'السعر',
+                                                              textAlign:
+                                                                  TextAlign
+                                                                      .center,
+                                                              style: TextStyle(
+                                                                color: Colors
+                                                                    .black,
+                                                                fontSize: 11,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      ...itemsToPrint.map(
+                                                        (item) => TableRow(
+                                                          children: [
+                                                            Padding(
+                                                              padding:
+                                                                  const EdgeInsets.all(
+                                                                    4.0,
+                                                                  ),
+                                                              child: Text(
+                                                                item
+                                                                    .product
+                                                                    .name,
+                                                                style: const TextStyle(
+                                                                  color: Colors
+                                                                      .black,
+                                                                  fontSize: 10,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                            Padding(
+                                                              padding:
+                                                                  const EdgeInsets.all(
+                                                                    4.0,
+                                                                  ),
+                                                              child: Text(
+                                                                '${item.quantity.toInt()}',
+                                                                textAlign:
+                                                                    TextAlign
+                                                                        .center,
+                                                                style: const TextStyle(
+                                                                  color: Colors
+                                                                      .black,
+                                                                  fontSize: 10,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                            Padding(
+                                                              padding:
+                                                                  const EdgeInsets.all(
+                                                                    4.0,
+                                                                  ),
+                                                              child: Text(
+                                                                '${(item.product.price * item.quantity).toInt()}',
+                                                                textAlign:
+                                                                    TextAlign
+                                                                        .center,
+                                                                style: const TextStyle(
+                                                                  color: Colors
+                                                                      .black,
+                                                                  fontSize: 10,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold,
+                                                                ),
+                                                              ),
+                                                            ),
+                                                          ],
                                                         ),
                                                       ),
                                                     ],
                                                   ),
                                                 ),
                                               ),
-                                              const SizedBox(height: 20),
-                                              const Divider(
-                                                color: Colors.black,
-                                                thickness: 2,
-                                              ),
-                                              const SizedBox(height: 15),
-                                              Row(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment
-                                                        .spaceBetween,
-                                                children: [
-                                                  const Text(
-                                                    'المجموع الكلي',
-                                                    style: TextStyle(
-                                                      color: Colors.black,
-                                                      fontSize: 10,
-                                                      fontWeight:
-                                                          FontWeight.w900,
+                                              const SizedBox(height: 5),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 4,
                                                     ),
+                                                decoration: BoxDecoration(
+                                                  border: Border.all(
+                                                    color: Colors.black,
                                                   ),
-                                                  Text(
-                                                    '${total.toInt()} د.ع',
-                                                    style: const TextStyle(
-                                                      fontSize: 18,
-                                                      color: Colors.black,
-                                                      fontWeight:
-                                                          FontWeight.w900,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              const SizedBox(height: 20),
-                                              const Center(
-                                                child: Column(
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
                                                   children: [
-                                                    SizedBox(height: 6),
-                                                    Text(
-                                                      'شكراً لزيارتكم.. ننتظركم دائماً',
+                                                    const Text(
+                                                      'المجموع الكلي',
                                                       style: TextStyle(
+                                                        color: Colors.black,
                                                         fontSize: 10,
-                                                        color: Colors.black54,
+                                                        fontWeight:
+                                                            FontWeight.w900,
+                                                      ),
+                                                    ),
+                                                    Text(
+                                                      '${total.toInt()} د.ع',
+                                                      style: const TextStyle(
+                                                        fontSize: 18,
+                                                        color: Colors.black,
+                                                        fontWeight:
+                                                            FontWeight.w900,
                                                       ),
                                                     ),
                                                   ],
+                                                ),
+                                              ),
+                                              const SizedBox(height: 5),
+                                              Container(
+                                                width: double.infinity,
+                                                padding: const EdgeInsets.all(
+                                                  4,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  border: Border.all(
+                                                    color: Colors.black,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                child: Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .start,
+                                                        children: const [
+                                                          Text(
+                                                            'متواجدين ٢٤ ساعة',
+                                                            style: TextStyle(
+                                                              fontSize: 10,
+                                                              color:
+                                                                  Colors.black,
+                                                            ),
+                                                          ),
+                                                          Text(
+                                                            'توصيل مجاني داخل المنطقة',
+                                                            style: TextStyle(
+                                                              fontSize: 10,
+                                                              color:
+                                                                  Colors.black,
+                                                            ),
+                                                          ),
+                                                          Text(
+                                                            'امسح الكود وتواصل معنا',
+                                                            style: TextStyle(
+                                                              fontSize: 10,
+                                                              color:
+                                                                  Colors.black,
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 10),
+                                                    QrImageView(
+                                                      data:
+                                                          'https://linktr.ee/dukanBeirut',
+                                                      version: QrVersions.auto,
+                                                      size: 40.0,
+                                                      foregroundColor:
+                                                          Colors.black,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              const SizedBox(height: 10),
+                                              const Center(
+                                                child: Text(
+                                                  'شكراً لزيارتكم.. ننتظركم دائماً',
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    color: Colors.black54,
+                                                  ),
                                                 ),
                                               ),
                                             ],

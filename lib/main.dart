@@ -93,7 +93,7 @@ class MyApp extends ConsumerWidget {
         return MediaQuery(
           data: MediaQuery.of(
             context,
-          ).copyWith(textScaler: TextScaler.noScaling),
+          ).copyWith(textScaler: const TextScaler.linear(0.8)),
           child: child!,
         );
       },
@@ -124,8 +124,26 @@ class MyApp extends ConsumerWidget {
       colorSchemeSeed: AppColors.primary,
     );
 
+    // Scaling down standard font sizes for compact UI
+    final textTheme = baseTheme.textTheme.copyWith(
+      displayLarge: baseTheme.textTheme.displayLarge?.copyWith(fontSize: 48),
+      displayMedium: baseTheme.textTheme.displayMedium?.copyWith(fontSize: 40),
+      displaySmall: baseTheme.textTheme.displaySmall?.copyWith(fontSize: 32),
+      headlineLarge: baseTheme.textTheme.headlineLarge?.copyWith(fontSize: 28),
+      headlineMedium: baseTheme.textTheme.headlineMedium?.copyWith(
+        fontSize: 24,
+      ),
+      headlineSmall: baseTheme.textTheme.headlineSmall?.copyWith(fontSize: 20),
+      titleLarge: baseTheme.textTheme.titleLarge?.copyWith(fontSize: 18),
+      titleMedium: baseTheme.textTheme.titleMedium?.copyWith(fontSize: 14),
+      titleSmall: baseTheme.textTheme.titleSmall?.copyWith(fontSize: 12),
+      bodyLarge: baseTheme.textTheme.bodyLarge?.copyWith(fontSize: 14),
+      bodyMedium: baseTheme.textTheme.bodyMedium?.copyWith(fontSize: 12),
+      bodySmall: baseTheme.textTheme.bodySmall?.copyWith(fontSize: 10),
+    );
+
     return baseTheme.copyWith(
-      textTheme: GoogleFonts.cairoTextTheme(baseTheme.textTheme),
+      textTheme: GoogleFonts.cairoTextTheme(textTheme),
       colorScheme: baseTheme.colorScheme.copyWith(
         primary: AppColors.primary,
         secondary: AppColors.secondary,
