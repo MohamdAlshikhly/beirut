@@ -195,20 +195,16 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  OutlinedButton.icon(
-                    onPressed: _checkManually,
-                    icon: const Icon(PhosphorIconsBold.arrowsClockwise),
-                    label: const Text('تحقق من الجلسة يدوياً (Manual Check)'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.white24),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                  const SizedBox(height: 16),
+                  // Small Icon Fallback for Manual Check
+                  Tooltip(
+                    message: 'تحقق يدوي في حال فشل التلقائي',
+                    child: IconButton(
+                      onPressed: _checkManually,
+                      icon: const Icon(
+                        PhosphorIconsBold.arrowsClockwise,
+                        color: Colors.white54,
+                        size: 20,
                       ),
                     ),
                   ),

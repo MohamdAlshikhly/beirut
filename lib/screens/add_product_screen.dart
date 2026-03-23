@@ -72,32 +72,12 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
     setState(() => _isLoading = true);
     try {
       String? imageUrl;
-      // Try to upload image if online
       imageUrl = await _uploadImage();
 
+      final supabase = ref.read(supabaseProvider);
       final db = await LocalDatabase.instance.database;
 
-      // Ensure the selected category exists locally to avoid FOREIGN KEY constraint failure
-      if (_selectedCategoryId != null) {
-        final localCat = await db.query(
-          'categories',
-          where: 'id = ?',
-          whereArgs: [_selectedCategoryId],
-        );
-        if (localCat.isEmpty) {
-          final categories = ref.read(categoriesProvider).value ?? [];
-          final selectedCat = categories.firstWhere(
-            (c) => c.id == _selectedCategoryId,
-          );
-          await db.insert('categories', {
-            'id': selectedCat.id,
-            'name': selectedCat.name,
-            'is_synced': 1,
-          });
-        }
-      }
-
-      await db.insert('products', {
+      final productData = {
         'name': _nameController.text.trim(),
         'barcode': _barcodeController.text.trim().isEmpty
             ? null
@@ -114,16 +94,50 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         'base_unit_id': _selectedBaseUnitId,
         'base_unit_conversion':
             double.tryParse(_conversionController.text) ?? 1.0,
-        'is_synced': 0,
-      });
+      };
 
-      ref.read(syncServiceProvider).syncUp(); // Trigger background sync
+      // 1. Try Online First
+      try {
+        final onlineRes = await supabase
+            .from('products')
+            .insert({...productData, 'is_synced': true})
+            .select()
+            .single();
+
+        // 2. Mirror to Local as Synced
+        await db.insert('products', {
+          ...productData,
+          'id': onlineRes['id'],
+          'is_synced': 1,
+        });
+
+        ref.invalidate(productsProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('تمت إضافة المنتج أونلاين بنجاح!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.pop(context);
+        }
+        return; // Success, exit
+      } catch (onlineError) {
+        debugPrint('Online product save failed: $onlineError');
+      }
+
+      // 3. Fallback to Local (Offline)
+      await db.insert('products', {...productData, 'is_synced': 0});
+
+      ref
+          .read(syncServiceProvider)
+          .syncUp(); // Background sync when back online
       ref.invalidate(productsProvider);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('تمت إضافة المنتج بنجاح!'),
-            backgroundColor: Colors.green,
+            content: Text('تم حفظ المنتج أوفلاين (سيتم الرفـع لاحقاً)'),
+            backgroundColor: Colors.orange,
           ),
         );
         Navigator.pop(context);

@@ -32,28 +32,17 @@ class _SidebarDetailsState extends ConsumerState<SidebarDetails> {
 
     setState(() => _isLoading = true);
     try {
-      final db = await LocalDatabase.instance.database;
-      final res = await db.rawQuery(
-        '''
-        SELECT items.*, products.name as product_name, products.price as product_price,
-               products.barcode as product_barcode, products.quantity as product_stock,
-               products.image_url as product_image_url
-        FROM sale_items items
-        JOIN products ON items.product_id = products.id
-        WHERE items.sale_id = ?
-      ''',
-        [sale['id']],
-      );
+      final supabase = ref.read(supabaseProvider);
+
+      // 1. Try Online First
+      final res = await supabase
+          .from('sale_items')
+          .select('*, products(*)')
+          .eq('sale_id', sale['id']);
 
       final items = res.map((row) {
-        final product = Product(
-          id: row['product_id'] as int,
-          name: row['product_name'] as String,
-          price: (row['product_price'] as num).toDouble(),
-          barcode: row['product_barcode'] as String?,
-          quantity: (row['product_stock'] as num).toDouble(),
-          imageUrl: row['product_image_url'] as String?,
-        );
+        final prodJson = row['products'];
+        final product = Product.fromJson(prodJson);
 
         return CartItem(
           product: product,
@@ -68,8 +57,49 @@ class _SidebarDetailsState extends ConsumerState<SidebarDetails> {
         });
       }
     } catch (e) {
-      debugPrint('Error fetching sidebar items: $e');
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('Online sidebar items fetch failed, fallback to local: $e');
+      // 2. Fallback to Local
+      try {
+        final db = await LocalDatabase.instance.database;
+        final localRes = await db.rawQuery(
+          '''
+          SELECT items.*, products.name as product_name, products.price as product_price,
+                 products.barcode as product_barcode, products.quantity as product_stock,
+                 products.image_url as product_image_url, products.category_id as product_category_id
+          FROM sale_items items
+          JOIN products ON items.product_id = products.id
+          WHERE items.sale_id = ?
+        ''',
+          [sale['id']],
+        );
+
+        final localItems = localRes.map((row) {
+          final product = Product(
+            id: row['product_id'] as int,
+            name: row['product_name'] as String,
+            price: (row['product_price'] as num).toDouble(),
+            barcode: row['product_barcode'] as String?,
+            quantity: (row['product_stock'] as num).toDouble(),
+            imageUrl: row['product_image_url'] as String?,
+            categoryId: row['product_category_id'] as int?,
+          );
+
+          return CartItem(
+            product: product,
+            quantity: (row['quantity'] as num).toDouble(),
+          );
+        }).toList();
+
+        if (mounted) {
+          setState(() {
+            _items = localItems;
+            _isLoading = false;
+          });
+        }
+      } catch (localError) {
+        debugPrint('Local sidebar items fetch failed: $localError');
+        if (mounted) setState(() => _isLoading = false);
+      }
     }
   }
 

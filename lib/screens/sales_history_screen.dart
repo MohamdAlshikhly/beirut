@@ -34,33 +34,30 @@ class _SalesHistoryScreenState extends ConsumerState<SalesHistoryScreen> {
   Future<void> _fetchSales() async {
     setState(() => _isLoading = true);
     try {
-      final isMobile = ref.read(isMobileProvider);
       final user = ref.read(authProvider);
+      final supabase = ref.read(supabaseProvider);
 
-      if (isMobile) {
-        debugPrint('DEBUG: MOBILE LIVE FETCH FOR SALES HISTORY');
-        final supabase = ref.read(supabaseProvider);
+      // 1. Try Online First (Supabase)
+      var query = supabase.from('sales').select('*, users(name)');
+      if (user != null && user.role != 'admin') {
+        query = query.eq('user_id', user.id);
+      }
 
-        var query = supabase.from('sales').select('*, users(name)');
+      final res = await query.order('created_at', ascending: false).limit(100);
 
-        if (user != null && user.role != 'admin') {
-          query = query.eq('user_id', user.id);
-        }
-
-        final res = await query
-            .order('created_at', ascending: false)
-            .limit(100);
-
-        if (mounted) {
-          setState(() {
-            _sales = List<Map<String, dynamic>>.from(res);
-            _filteredSales = _sales;
-          });
-        }
-      } else {
-        // Desktop/Local Logic
+      if (mounted) {
+        setState(() {
+          _sales = List<Map<String, dynamic>>.from(res);
+          _filteredSales = _sales;
+        });
+      }
+    } catch (e) {
+      debugPrint('Online sales fetch failed, falling back to local: $e');
+      // 2. Fallback to Local (Offline)
+      try {
         final db = await LocalDatabase.instance.database;
-        String query = '''
+        final user = ref.read(authProvider);
+        String queryStr = '''
           SELECT sales.*, users.name as user_name
           FROM sales
           LEFT JOIN users ON sales.user_id = users.id
@@ -68,17 +65,17 @@ class _SalesHistoryScreenState extends ConsumerState<SalesHistoryScreen> {
 
         List<dynamic> args = [];
         if (user != null && user.role != 'admin') {
-          query += ' WHERE sales.user_id = ?';
+          queryStr += ' WHERE sales.user_id = ?';
           args.add(user.id);
         }
 
-        query += ' ORDER BY created_at DESC LIMIT 100';
+        queryStr += ' ORDER BY created_at DESC LIMIT 100';
 
-        final res = await db.rawQuery(query, args);
+        final localRes = await db.rawQuery(queryStr, args);
 
         if (mounted) {
           setState(() {
-            _sales = res.map((row) {
+            _sales = localRes.map((row) {
               final map = Map<String, dynamic>.from(row);
               map['users'] = {'name': row['user_name']};
               return map;
@@ -86,9 +83,9 @@ class _SalesHistoryScreenState extends ConsumerState<SalesHistoryScreen> {
             _filteredSales = _sales;
           });
         }
+      } catch (localError) {
+        debugPrint('Local sales fetch failed: $localError');
       }
-    } catch (e) {
-      debugPrint('Error fetching sales history: $e');
     }
     if (mounted) setState(() => _isLoading = false);
   }
@@ -456,48 +453,26 @@ class _SaleDetailsScreenState extends ConsumerState<SaleDetailsScreen> {
 
   Future<void> _fetchItems() async {
     try {
-      final db = await LocalDatabase.instance.database;
-      final response = await db.rawQuery(
-        '''
-        SELECT 
-          sale_items.id as item_id,
-          sale_items.sale_id,
-          sale_items.product_id,
-          sale_items.quantity as sold_quantity,
-          sale_items.price as item_price,
-          products.name,
-          products.barcode,
-          products.price as current_price,
-          products.cost_price,
-          products.quantity as stock_quantity,
-          products.category_id
-        FROM sale_items
-        JOIN products ON sale_items.product_id = products.id
-        WHERE sale_items.sale_id = ?
-      ''',
-        [widget.saleId],
-      );
+      final supabase = ref.read(supabaseProvider);
+
+      // 1. Try Online First
+      final res = await supabase
+          .from('sale_items')
+          .select('*, products(*)')
+          .eq('sale_id', widget.saleId);
 
       List<CartItem> loadedItems = [];
-      for (var row in response) {
-        final prod = Product(
-          id: row['product_id'] as int,
-          name: row['name'] as String,
-          barcode: row['barcode'] as String?,
-          price: (row['item_price'] as num).toDouble(),
-          costPrice: row['cost_price'] != null
-              ? (row['cost_price'] as num).toDouble()
-              : null,
-          quantity: (row['stock_quantity'] as num).toDouble(),
-          categoryId: row['category_id'] as int?,
-        );
+      for (var row in res) {
+        final prodJson = row['products'];
+        final prod = Product.fromJson(prodJson);
         loadedItems.add(
           CartItem(
             product: prod,
-            quantity: (row['sold_quantity'] as num).toDouble(),
+            quantity: (row['quantity'] as num).toDouble(),
           ),
         );
       }
+
       if (mounted) {
         setState(() {
           _items = loadedItems;
@@ -505,8 +480,63 @@ class _SaleDetailsScreenState extends ConsumerState<SaleDetailsScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Error $e');
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('Online items fetch failed, fallback to local: $e');
+      // 2. Fallback to Local
+      try {
+        final db = await LocalDatabase.instance.database;
+        final localRes = await db.rawQuery(
+          '''
+          SELECT 
+            sale_items.id as item_id,
+            sale_items.sale_id,
+            sale_items.product_id,
+            sale_items.quantity as sold_quantity,
+            sale_items.price as item_price,
+            products.name,
+            products.barcode,
+            products.price as current_price,
+            products.cost_price,
+            products.quantity as stock_quantity,
+            products.category_id,
+            products.image_url
+          FROM sale_items
+          JOIN products ON sale_items.product_id = products.id
+          WHERE sale_items.sale_id = ?
+        ''',
+          [widget.saleId],
+        );
+
+        List<CartItem> localItems = [];
+        for (var row in localRes) {
+          final prod = Product(
+            id: row['product_id'] as int,
+            name: row['name'] as String,
+            barcode: row['barcode'] as String?,
+            price: (row['item_price'] as num).toDouble(),
+            costPrice: row['cost_price'] != null
+                ? (row['cost_price'] as num).toDouble()
+                : null,
+            quantity: (row['stock_quantity'] as num).toDouble(),
+            categoryId: row['category_id'] as int?,
+            imageUrl: row['image_url'] as String?,
+          );
+          localItems.add(
+            CartItem(
+              product: prod,
+              quantity: (row['sold_quantity'] as num).toDouble(),
+            ),
+          );
+        }
+        if (mounted) {
+          setState(() {
+            _items = localItems;
+            _isLoading = false;
+          });
+        }
+      } catch (localError) {
+        debugPrint('Local items fetch failed: $localError');
+        if (mounted) setState(() => _isLoading = false);
+      }
     }
   }
 

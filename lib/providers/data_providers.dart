@@ -8,7 +8,7 @@ import 'dart:convert';
 import '../main.dart'; // To access global prefs
 import '../models/models.dart';
 import '../services/local_database.dart';
-import '../services/sync_service.dart';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show Platform;
 
@@ -98,27 +98,42 @@ final balanceProvider = StreamProvider<int>((ref) {
   // Computer is LIVE-FIRST with FALLBACK
   ref.watch(dbUpdateTriggerProvider);
 
-  return Stream.fromFuture(() async {
+  return (() async* {
+    ref.watch(dbUpdateTriggerProvider);
     try {
+      // 1. Try Live (Online First)
       final response = await supabase
           .from('balance')
           .select('currentBalance')
           .order('created_at', ascending: false)
           .limit(1)
           .maybeSingle();
-      return response?['currentBalance'] as int? ?? 0;
+      yield response?['currentBalance'] as int? ?? 0;
+
+      // 2. Start Real-time Stream if Online was successful
+      yield* supabase
+          .from('balance')
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false)
+          .limit(1)
+          .map(
+            (list) =>
+                list.isEmpty ? 0 : list.first['currentBalance'] as int? ?? 0,
+          );
     } catch (e) {
       debugPrint('Live balance fetch failed, falling back to local: $e');
+      // 3. Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'balance',
         orderBy: 'created_at DESC',
         limit: 1,
       );
-      if (response.isEmpty) return 0;
-      return response.first['currentBalance'] as int? ?? 0;
+      yield response.isEmpty
+          ? 0
+          : response.first['currentBalance'] as int? ?? 0;
     }
-  }());
+  })();
 });
 
 final categoriesProvider = StreamProvider<List<Category>>((ref) {
@@ -133,14 +148,16 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
   }
 
   return (() async* {
+    ref.watch(dbUpdateTriggerProvider);
     try {
+      // Try Supabase Stream (Online First)
       yield* supabase
           .from('categories')
           .stream(primaryKey: ['id'])
           .map((list) => list.map((json) => Category.fromJson(json)).toList());
     } catch (e) {
       debugPrint('Desktop Category Stream failed, fallback to local: $e');
-      ref.watch(dbUpdateTriggerProvider);
+      // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query('categories');
       yield response.map((json) => Category.fromJson(json)).toList();
@@ -160,14 +177,16 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
   }
 
   return (() async* {
+    ref.watch(dbUpdateTriggerProvider);
     try {
+      // Try Supabase Stream (Online First)
       yield* supabase
           .from('products')
           .stream(primaryKey: ['id'])
           .map((list) => list.map((json) => Product.fromJson(json)).toList());
     } catch (e) {
       debugPrint('Desktop Product Stream failed, fallback to local: $e');
-      ref.watch(dbUpdateTriggerProvider);
+      // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query('products');
       yield response.map((json) => Product.fromJson(json)).toList();
@@ -198,8 +217,10 @@ final todaySalesProvider = StreamProvider<double>((ref) {
 
   ref.watch(dbUpdateTriggerProvider);
 
-  return Stream.fromFuture(() async {
+  return (() async* {
+    ref.watch(dbUpdateTriggerProvider);
     try {
+      // 1. Try Live (Online First)
       final res = await supabase
           .from('sales')
           .select('total_price')
@@ -208,9 +229,23 @@ final todaySalesProvider = StreamProvider<double>((ref) {
       for (var sale in res) {
         sum += (sale['total_price'] as num).toDouble();
       }
-      return sum;
+      yield sum;
+
+      // 2. Stream for live updates
+      yield* supabase
+          .from('sales')
+          .stream(primaryKey: ['id'])
+          .gte('created_at', startOfDay)
+          .map((list) {
+            double sum = 0;
+            for (var sale in list) {
+              sum += (sale['total_price'] as num).toDouble();
+            }
+            return sum;
+          });
     } catch (e) {
       debugPrint('Live today sales fetch failed, falling back to local: $e');
+      // 3. Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
@@ -220,9 +255,9 @@ final todaySalesProvider = StreamProvider<double>((ref) {
       for (var sale in response) {
         sum += (sale['total_price'] as num).toDouble();
       }
-      return sum;
+      yield sum;
     }
-  }());
+  })();
 });
 
 final todaySalesCountProvider = StreamProvider<int>((ref) {
@@ -242,26 +277,34 @@ final todaySalesCountProvider = StreamProvider<int>((ref) {
 
   ref.watch(dbUpdateTriggerProvider);
 
-  return Stream.fromFuture(() async {
+  return (() async* {
+    ref.watch(dbUpdateTriggerProvider);
     try {
+      // 1. Try Live (Online First)
       final response = await supabase
           .from('sales')
           .select('id')
           .gte('created_at', startOfDay);
-      return response.length;
+      yield response.length;
+
+      // 2. Stream for live updates
+      yield* supabase
+          .from('sales')
+          .stream(primaryKey: ['id'])
+          .gte('created_at', startOfDay)
+          .map((list) => list.length);
     } catch (e) {
-      debugPrint(
-        'Live today sales count fetch failed, falling back to local: $e',
-      );
+      debugPrint('Live sales count fetch failed, fallback to local: $e');
+      // 3. Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
         columns: ['id'],
         where: "date(created_at) = date('now', 'utc')",
       );
-      return response.length;
+      yield response.length;
     }
-  }());
+  })();
 });
 
 class EditingSaleIdNotifier extends Notifier<int?> {
@@ -521,13 +564,14 @@ class CheckoutRepository {
     final cartItems = ref.read(cartProvider);
     if (cartItems.isEmpty) return false;
 
-    final isMobile = ref.read(isMobileProvider);
     final supabase = ref.read(supabaseProvider);
     final total = ref.read(cartProvider.notifier).total;
     final currentUser = ref.read(authProvider);
+    final db = await LocalDatabase.instance.database;
 
-    // 1. Try Live Checkout (Always for Mobile, Try for Computer)
+    // ONLINE-FIRST TRANSACTION
     try {
+      // 1. Insert Sale
       final saleResponse = await supabase
           .from('sales')
           .insert({
@@ -541,23 +585,25 @@ class CheckoutRepository {
 
       final saleId = saleResponse['id'];
 
+      // 2. Insert Sale Items (Synchronously)
       for (final item in cartItems) {
         await supabase.from('sale_items').insert({
           'sale_id': saleId,
           'product_id': item.product.id,
-          'quantity': item.quantity,
+          'quantity': item.quantity.toInt(),
           'price': item.product.price,
         });
 
-        // Update Stock with Linkage (Remote)
+        // 3. Update Stock with Linkage (Remote) - Await each to be sure
         await updateStockWithLinkage(
           productId: item.product.id,
           change: -item.quantity,
-          reason: 'بيع في فاتورة #$saleId (Live)',
+          reason: 'بيع في فاتورة #$saleId (Online)',
           isOnline: true,
         );
       }
 
+      // 4. Update Balance (Online)
       if (paymentType == 'cash') {
         final remoteBalRes = await supabase
             .from('balance')
@@ -568,7 +614,29 @@ class CheckoutRepository {
         final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
         await supabase.from('balance').insert({
           'currentBalance': currentBal + total.toInt(),
+          'is_synced': true,
         });
+      }
+
+      // 5. Update Local DB for sync consistency (so offline view is correct)
+      try {
+        final localSaleId = await db.insert('sales', {
+          'total_price': total,
+          'payment_type': paymentType,
+          if (currentUser != null) 'user_id': currentUser.id,
+          'is_synced': 1, // Already synced
+        });
+
+        for (final item in cartItems) {
+          await db.insert('sale_items', {
+            'sale_id': localSaleId,
+            'product_id': item.product.id,
+            'quantity': item.quantity,
+            'price': item.product.price,
+          });
+        }
+      } catch (localError) {
+        debugPrint('Local mirror update failed: $localError');
       }
 
       ref.read(cartProvider.notifier).clear();
@@ -577,45 +645,49 @@ class CheckoutRepository {
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
       return true;
-    } catch (e) {
-      if (isMobile) {
-        debugPrint('Mobile LIVE Checkout failed: $e');
-        return false;
-      }
-      debugPrint(
-        'Computer LIVE Checkout failed, falling back to Stateless Offline: $e',
-      );
-    }
+    } catch (onlineError) {
+      debugPrint('Online checkout failed: $onlineError');
 
-    // 2. Stateless Offline Fallback (Computer Only)
-    final db = await LocalDatabase.instance.database;
-
-    try {
-      final saleId = await db.insert('sales', {
-        'total_price': total,
-        'payment_type': paymentType,
-        if (currentUser != null) 'user_id': currentUser.id,
-        'is_synced': 0,
-      });
-
-      for (final item in cartItems) {
-        await db.insert('sale_items', {
-          'sale_id': saleId,
-          'product_id': item.product.id,
-          'quantity': item.quantity,
-          'price': item.product.price,
+      // OFFLINE FALLBACK (Only if internet fails)
+      try {
+        final saleId = await db.insert('sales', {
+          'total_price': total,
+          'payment_type': paymentType,
+          if (currentUser != null) 'user_id': currentUser.id,
+          'is_synced': 0,
         });
 
-        // IMPORTANT: No local stock decrement or balance update here
-        // as per user's "Stateless" requirement to avoid errors.
-      }
+        for (final item in cartItems) {
+          await db.insert('sale_items', {
+            'sale_id': saleId,
+            'product_id': item.product.id,
+            'quantity': item.quantity,
+            'price': item.product.price,
+          });
 
-      ref.read(cartProvider.notifier).clear();
-      // No invalidations needed as we didn't update local state
-      return true;
-    } catch (e) {
-      debugPrint('Stateless Offline Checkout error: $e');
-      return false;
+          // In offline mode, we update local stock if possible to keep business running
+          await updateStockWithLinkage(
+            productId: item.product.id,
+            change: -item.quantity,
+            reason: 'بيع أوفلاين #$saleId',
+            isOnline: false,
+          );
+        }
+
+        if (paymentType == 'cash') {
+          await _updateDrawerBalance(db, total);
+        }
+
+        ref.read(cartProvider.notifier).clear();
+        ref.invalidate(balanceProvider);
+        ref.invalidate(productsProvider);
+        ref.invalidate(todaySalesProvider);
+        ref.invalidate(todaySalesCountProvider);
+        return true;
+      } catch (offlineError) {
+        debugPrint('Offline checkout also failed: $offlineError');
+        return false;
+      }
     }
   }
 
@@ -626,151 +698,332 @@ class CheckoutRepository {
 
     if (saleId == null || cartItems.isEmpty) return false;
 
+    final supabase = ref.read(supabaseProvider);
     final db = await LocalDatabase.instance.database;
     final total = ref.read(cartProvider.notifier).total;
 
+    // ONLINE-FIRST TRANSACTION
     try {
-      final existingSale = (await db.query(
-        'sales',
-        columns: ['total_price', 'payment_type'],
-        where: 'id = ?',
-        whereArgs: [saleId],
-      )).first;
+      // 1. Get original sale from Supabase to calculate diff
+      final existingSale = await supabase
+          .from('sales')
+          .select()
+          .eq('id', saleId)
+          .single();
 
       final oldTotal = (existingSale['total_price'] as num).toDouble();
       final oldPaymentType = existingSale['payment_type'] as String;
 
+      // 2. Adjust Balance (Online)
       if (oldPaymentType == 'cash') {
-        await _updateDrawerBalance(db, -oldTotal);
+        final remoteBalRes = await supabase
+            .from('balance')
+            .select()
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
+        await supabase.from('balance').insert({
+          'currentBalance': currentBal - oldTotal.toInt(),
+          'is_synced': true,
+        });
       }
 
-      await db.update(
-        'sales',
-        {'total_price': total, 'payment_type': paymentType, 'is_synced': 0},
-        where: 'id = ?',
-        whereArgs: [saleId],
-      );
+      // 3. Update Sale (Online)
+      await supabase
+          .from('sales')
+          .update({
+            'total_price': total,
+            'payment_type': paymentType,
+            'is_synced': true,
+          })
+          .eq('id', saleId);
 
       if (paymentType == 'cash') {
-        await _updateDrawerBalance(db, total);
+        final lastBalRes = await supabase
+            .from('balance')
+            .select()
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        final lastBal = lastBalRes?['currentBalance'] as int? ?? 0;
+        await supabase.from('balance').insert({
+          'currentBalance': lastBal + total.toInt(),
+          'is_synced': true,
+        });
       }
 
+      // 4. Update Items (Delete and Re-insert for Online Simplicity)
+      await supabase.from('sale_items').delete().eq('sale_id', saleId);
+      for (final item in cartItems) {
+        await supabase.from('sale_items').insert({
+          'sale_id': saleId,
+          'product_id': item.product.id,
+          'quantity': item.quantity.toInt(),
+          'price': item.product.price,
+        });
+      }
+
+      // 5. Reconcile Stock (Diff calculation)
       Map<int, CartItem> originalMap = {
         for (var item in originalItems) item.product.id: item,
       };
       Map<int, CartItem> currentMap = {
         for (var item in cartItems) item.product.id: item,
       };
-
       Set<int> allProductIds = {...originalMap.keys, ...currentMap.keys};
 
       for (var productId in allProductIds) {
         final oldItem = originalMap[productId];
         final newItem = currentMap[productId];
-
         double oldQty = oldItem?.quantity ?? 0.0;
         double newQty = newItem?.quantity ?? 0.0;
         double diff = newQty - oldQty;
 
         if (diff != 0) {
-          if (newQty == 0) {
-            await db.delete(
-              'sale_items',
-              where: 'sale_id = ? AND product_id = ?',
-              whereArgs: [saleId, productId],
-            );
-          } else {
-            final existing = await db.query(
-              'sale_items',
-              where: 'sale_id = ? AND product_id = ?',
-              whereArgs: [saleId, productId],
-            );
-            if (existing.isEmpty) {
-              await db.insert('sale_items', {
-                'sale_id': saleId,
-                'product_id': productId,
-                'quantity': newQty,
-                'price': newItem!.product.price,
-              });
-            } else {
-              await db.update(
-                'sale_items',
-                {'quantity': newQty},
-                where: 'sale_id = ? AND product_id = ?',
-                whereArgs: [saleId, productId],
-              );
-            }
-          }
-
-          // Update Stock with Linkage (Local only, sync will propagate)
           await updateStockWithLinkage(
             productId: productId,
             change: -diff,
-            reason: 'تعديل فاتورة #$saleId',
-            isOnline: false,
+            reason: 'تعديل فاتورة #$saleId (Online)',
+            isOnline: true,
           );
         }
+      }
+
+      // 6. Local Mirror Update
+      try {
+        await db.update(
+          'sales',
+          {'total_price': total, 'payment_type': paymentType, 'is_synced': 1},
+          where: 'id = ?',
+          whereArgs: [saleId],
+        );
+        await db.delete(
+          'sale_items',
+          where: 'sale_id = ?',
+          whereArgs: [saleId],
+        );
+        for (final item in cartItems) {
+          await db.insert('sale_items', {
+            'sale_id': saleId,
+            'product_id': item.product.id,
+            'quantity': item.quantity,
+            'price': item.product.price,
+          });
+        }
+      } catch (lErr) {
+        debugPrint('Local mirror update error during edit: $lErr');
       }
 
       ref.read(cartProvider.notifier).clear();
       ref.invalidate(productsProvider);
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
-
-      ref.read(syncServiceProvider).syncUp();
-
       return true;
-    } catch (e) {
-      debugPrint('Update sale error: $e');
-      return false;
+    } catch (onlineError) {
+      debugPrint('Online sale update failed: $onlineError');
+      // OFFLINE FALLBACK
+      try {
+        final existingSaleRes = (await db.query(
+          'sales',
+          columns: ['total_price', 'payment_type'],
+          where: 'id = ?',
+          whereArgs: [saleId],
+        ));
+        if (existingSaleRes.isEmpty) return false;
+        final existingSale = existingSaleRes.first;
+
+        final oldTotal = (existingSale['total_price'] as num).toDouble();
+        final oldPaymentType = existingSale['payment_type'] as String;
+
+        if (oldPaymentType == 'cash') {
+          await _updateDrawerBalance(db, -oldTotal);
+        }
+
+        await db.update(
+          'sales',
+          {'total_price': total, 'payment_type': paymentType, 'is_synced': 0},
+          where: 'id = ?',
+          whereArgs: [saleId],
+        );
+
+        if (paymentType == 'cash') {
+          await _updateDrawerBalance(db, total);
+        }
+
+        Map<int, CartItem> originalMap = {
+          for (var item in originalItems) item.product.id: item,
+        };
+        Map<int, CartItem> currentMap = {
+          for (var item in cartItems) item.product.id: item,
+        };
+        Set<int> allProductIds = {...originalMap.keys, ...currentMap.keys};
+
+        for (var productId in allProductIds) {
+          final oldItem = originalMap[productId];
+          final newItem = currentMap[productId];
+          double oldQty = oldItem?.quantity ?? 0.0;
+          double newQty = newItem?.quantity ?? 0.0;
+          double diff = newQty - oldQty;
+
+          if (diff != 0) {
+            if (newQty == 0) {
+              await db.delete(
+                'sale_items',
+                where: 'sale_id = ? AND product_id = ?',
+                whereArgs: [saleId, productId],
+              );
+            } else {
+              final existing = await db.query(
+                'sale_items',
+                where: 'sale_id = ? AND product_id = ?',
+                whereArgs: [saleId, productId],
+              );
+              if (existing.isEmpty) {
+                await db.insert('sale_items', {
+                  'sale_id': saleId,
+                  'product_id': productId,
+                  'quantity': newQty,
+                  'price': newItem!.product.price,
+                });
+              } else {
+                await db.update(
+                  'sale_items',
+                  {'quantity': newQty},
+                  where: 'sale_id = ? AND product_id = ?',
+                  whereArgs: [saleId, productId],
+                );
+              }
+            }
+            await updateStockWithLinkage(
+              productId: productId,
+              change: -diff,
+              reason: 'تعديل أوفلاين #$saleId',
+              isOnline: false,
+            );
+          }
+        }
+
+        ref.read(cartProvider.notifier).clear();
+        ref.invalidate(productsProvider);
+        ref.invalidate(todaySalesProvider);
+        ref.invalidate(todaySalesCountProvider);
+        return true;
+      } catch (offlineError) {
+        debugPrint('Offline sale update also failed: $offlineError');
+        return false;
+      }
     }
   }
 
   Future<bool> deleteSale(int saleId) async {
+    final supabase = ref.read(supabaseProvider);
     final db = await LocalDatabase.instance.database;
+
+    // ONLINE-FIRST TRANSACTION
     try {
-      final existingSale = (await db.query(
-        'sales',
-        where: 'id = ?',
-        whereArgs: [saleId],
-      )).first;
+      // 1. Revert Balance & Stock Online
+      final existingSale = await supabase
+          .from('sales')
+          .select()
+          .eq('id', saleId)
+          .single();
       final total = (existingSale['total_price'] as num).toDouble();
       final paymentType = existingSale['payment_type'] as String;
 
       if (paymentType == 'cash') {
-        await _updateDrawerBalance(db, -total);
+        final remoteBalRes = await supabase
+            .from('balance')
+            .select()
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
+        await supabase.from('balance').insert({
+          'currentBalance': currentBal - total.toInt(),
+          'is_synced': true,
+        });
       }
 
-      final items = await db.query(
-        'sale_items',
-        where: 'sale_id = ?',
-        whereArgs: [saleId],
-      );
+      final items = await supabase
+          .from('sale_items')
+          .select()
+          .eq('sale_id', saleId);
       for (var item in items) {
-        final productId = item['product_id'] as int;
-        final qty = (item['quantity'] as num).toDouble();
-
-        // Update Stock with Linkage (Local only, sync will propagate)
         await updateStockWithLinkage(
-          productId: productId,
-          change: qty,
-          reason: 'حذف فاتورة #$saleId',
-          isOnline: false,
+          productId: item['product_id'],
+          change: (item['quantity'] as num).toDouble(),
+          reason: 'إرجاع فاتورة #$saleId (Online)',
+          isOnline: true,
         );
       }
 
-      await db.delete('sale_items', where: 'sale_id = ?', whereArgs: [saleId]);
-      await db.delete('sales', where: 'id = ?', whereArgs: [saleId]);
+      // 2. Delete Online
+      await supabase.from('sale_items').delete().eq('sale_id', saleId);
+      await supabase.from('sales').delete().eq('id', saleId);
 
+      // 3. Mirror Local
+      try {
+        await db.delete(
+          'sale_items',
+          where: 'sale_id = ?',
+          whereArgs: [saleId],
+        );
+        await db.delete('sales', where: 'id = ?', whereArgs: [saleId]);
+      } catch (lErr) {
+        debugPrint('Local mirror delete error: $lErr');
+      }
+
+      ref.invalidate(balanceProvider);
       ref.invalidate(productsProvider);
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
-      ref.read(syncServiceProvider).syncUp();
-
       return true;
-    } catch (e) {
-      debugPrint('Error deleting sale: $e');
-      return false;
+    } catch (onlineError) {
+      debugPrint('Online deletion failed: $onlineError');
+      // OFFLINE FALLBACK
+      try {
+        final res = await db.query(
+          'sales',
+          where: 'id = ?',
+          whereArgs: [saleId],
+        );
+        if (res.isEmpty) return false;
+        final total = (res.first['total_price'] as num).toDouble();
+        final pType = res.first['payment_type'] as String;
+
+        if (pType == 'cash') await _updateDrawerBalance(db, -total);
+
+        final items = await db.query(
+          'sale_items',
+          where: 'sale_id = ?',
+          whereArgs: [saleId],
+        );
+        for (var itm in items) {
+          await updateStockWithLinkage(
+            productId: itm['product_id'] as int,
+            change: (itm['quantity'] as num).toDouble(),
+            reason: 'إرجاع أوفلاين #$saleId',
+            isOnline: false,
+          );
+        }
+
+        await db.delete(
+          'sale_items',
+          where: 'sale_id = ?',
+          whereArgs: [saleId],
+        );
+        await db.delete('sales', where: 'id = ?', whereArgs: [saleId]);
+
+        ref.invalidate(balanceProvider);
+        ref.invalidate(productsProvider);
+        ref.invalidate(todaySalesProvider);
+        ref.invalidate(todaySalesCountProvider);
+        return true;
+      } catch (offErr) {
+        debugPrint('Offline deletion also failed: $offErr');
+        return false;
+      }
     }
   }
 }

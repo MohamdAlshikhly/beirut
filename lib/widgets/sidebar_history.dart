@@ -32,38 +32,61 @@ class _SidebarHistoryState extends ConsumerState<SidebarHistory> {
     setState(() => _isLoading = true);
     try {
       final user = ref.read(authProvider);
-      final db = await LocalDatabase.instance.database;
+      final supabase = ref.read(supabaseProvider);
 
-      String query = '''
-        SELECT sales.*, users.name as user_name
-        FROM sales
-        LEFT JOIN users ON sales.user_id = users.id
-      ''';
-
-      List<dynamic> args = [];
+      // 1. Try Online First
+      var query = supabase.from('sales').select('*, users(name)');
       if (user != null && user.role != 'admin') {
-        query += ' WHERE sales.user_id = ?';
-        args.add(user.id);
+        query = query.eq('user_id', user.id);
       }
 
-      query += ' ORDER BY created_at DESC LIMIT 50';
-
-      final res = await db.rawQuery(query, args);
+      final res = await query.order('created_at', ascending: false).limit(50);
 
       if (mounted) {
         setState(() {
-          _sales = res.map((row) {
-            final map = Map<String, dynamic>.from(row);
-            map['users'] = {'name': row['user_name']};
-            return map;
-          }).toList();
+          _sales = List<Map<String, dynamic>>.from(res);
           _filteredSales = _sales;
           _isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint('Error fetching sidebar sales: $e');
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('Online sidebar sales fetch failed, fallback to local: $e');
+      // 2. Fallback to Local
+      try {
+        final db = await LocalDatabase.instance.database;
+        final user = ref.read(authProvider);
+
+        String queryStr = '''
+          SELECT sales.*, users.name as user_name
+          FROM sales
+          LEFT JOIN users ON sales.user_id = users.id
+        ''';
+
+        List<dynamic> args = [];
+        if (user != null && user.role != 'admin') {
+          queryStr += ' WHERE sales.user_id = ?';
+          args.add(user.id);
+        }
+
+        queryStr += ' ORDER BY created_at DESC LIMIT 50';
+
+        final localRes = await db.rawQuery(queryStr, args);
+
+        if (mounted) {
+          setState(() {
+            _sales = localRes.map((row) {
+              final map = Map<String, dynamic>.from(row);
+              map['users'] = {'name': row['user_name']};
+              return map;
+            }).toList();
+            _filteredSales = _sales;
+            _isLoading = false;
+          });
+        }
+      } catch (localError) {
+        debugPrint('Local sidebar sales fetch failed: $localError');
+        if (mounted) setState(() => _isLoading = false);
+      }
     }
   }
 

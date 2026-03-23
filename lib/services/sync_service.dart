@@ -225,7 +225,10 @@ class SyncService {
           final itemMap = Map<String, dynamic>.from(item);
           itemMap.remove('id');
           itemMap['sale_id'] = remoteSaleId;
-          await _supabase.from('sale_items').insert(itemMap);
+
+          final mapToSync = Map<String, dynamic>.from(itemMap);
+          mapToSync['quantity'] = (mapToSync['quantity'] as num).toInt();
+          await _supabase.from('sale_items').insert(mapToSync);
 
           // Update Remote Stock
           try {

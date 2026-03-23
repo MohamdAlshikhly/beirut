@@ -89,6 +89,14 @@ class MyApp extends ConsumerWidget {
       theme: _buildTheme(Brightness.light),
       darkTheme: _buildTheme(Brightness.dark),
       themeMode: themeMode,
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.noScaling),
+          child: child!,
+        );
+      },
       home: LayoutBuilder(
         builder: (context, constraints) {
           if (constraints.maxWidth < 800) {
