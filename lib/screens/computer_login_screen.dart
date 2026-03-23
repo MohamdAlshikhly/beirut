@@ -37,48 +37,86 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
         .listen(
           (data) async {
             if (data.isEmpty || _isLoggingIn || !mounted) return;
-
-            setState(() => _isLoggingIn = true);
-
-            try {
-              final sessionRow = data.first;
-              final userId = sessionRow['user_id'];
-
-              final userRes = await client
-                  .from('users')
-                  .select()
-                  .eq('id', userId)
-                  .single();
-
-              final user = AppUser.fromJson(userRes);
-
-              if (mounted) {
-                ref.read(authProvider.notifier).login(user);
-
-                // Clean up: delete the session record after successful login to keep DB clean
-                client
-                    .from('sessions')
-                    .delete()
-                    .eq('session_code', _sessionId)
-                    .then((_) => debugPrint('Session cleaned up'))
-                    .catchError((e) => debugPrint('Session cleanup error: $e'));
-              }
-            } catch (e) {
-              debugPrint('Login Session Error: $e');
-              if (mounted) {
-                setState(() => _isLoggingIn = false);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('فشل تسجيل الدخول، يرجى المحاولة مرة أخرى'),
-                  ),
-                );
-              }
-            }
+            await _processSessionRow(data.first);
           },
           onError: (error) {
             debugPrint('Realtime Stream Error: $error');
           },
         );
+  }
+
+  Future<void> _processSessionRow(Map<String, dynamic> sessionRow) async {
+    if (!mounted) return;
+    setState(() => _isLoggingIn = true);
+
+    try {
+      final client = ref.read(supabaseProvider);
+      final userId = sessionRow['user_id'];
+
+      final userRes = await client
+          .from('users')
+          .select()
+          .eq('id', userId)
+          .single();
+
+      final user = AppUser.fromJson(userRes);
+
+      if (mounted) {
+        ref.read(authProvider.notifier).login(user);
+
+        // Clean up: delete the session record after successful login
+        client
+            .from('sessions')
+            .delete()
+            .eq('session_code', _sessionId)
+            .then((_) => debugPrint('Session cleaned up'))
+            .catchError((e) => debugPrint('Session cleanup error: $e'));
+      }
+    } catch (e) {
+      debugPrint('Login Session Error: $e');
+      if (mounted) {
+        setState(() => _isLoggingIn = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('فشل تسجيل الدخول، يرجى المحاولة مرة أخرى'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _checkManually() async {
+    if (_isLoggingIn || !mounted) return;
+
+    try {
+      final client = ref.read(supabaseProvider);
+      final res = await client
+          .from('sessions')
+          .select()
+          .eq('session_code', _sessionId)
+          .maybeSingle();
+
+      if (res != null) {
+        await _processSessionRow(res);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'لم يتم العثور على جلسة مفعلة بعد. يرجى المسح من الهاتف أولاً.',
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Manual Check Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('حدث خطأ أثناء التحقق من الجلسة')),
+        );
+      }
+    }
   }
 
   @override
@@ -145,7 +183,7 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
                         ),
                       ),
                 const SizedBox(height: 24),
-                if (!_isLoggingIn)
+                if (!_isLoggingIn) ...[
                   const Text(
                     'بانتظار قراءة الـ QR من تطبيق الهاتف...',
                     style: TextStyle(
@@ -153,6 +191,24 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                  const SizedBox(height: 24),
+                  OutlinedButton.icon(
+                    onPressed: _checkManually,
+                    icon: const Icon(PhosphorIconsBold.arrowsClockwise),
+                    label: const Text('تحقق من الجلسة يدوياً (Manual Check)'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.white24),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
