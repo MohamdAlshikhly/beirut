@@ -15,15 +15,28 @@ import 'providers/data_providers.dart';
 import 'utils/app_colors.dart';
 import 'services/sync_service.dart';
 import 'dart:async';
-import 'dart:io' show Platform;
-
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/local_database.dart';
+import 'dart:io';
+
+class MyHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+  }
+}
 
 late SharedPreferences prefs;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Bypass SSL certificate verification for desktop/emulators facing HandshakeException
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+    HttpOverrides.global = MyHttpOverrides();
+  }
   prefs = await SharedPreferences.getInstance();
 
   // Initialize SQLite Local DB
