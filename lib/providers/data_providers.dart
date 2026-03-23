@@ -96,13 +96,13 @@ final balanceProvider = StreamProvider<int>((ref) {
   }
 
   // Computer is LIVE-FIRST with FALLBACK
-  ref.watch(dbUpdateTriggerProvider);
+  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  if (!isOnline) {
+    ref.watch(dbUpdateTriggerProvider);
+  }
+  final isOffline = !isOnline;
 
   return (() async* {
-    ref.watch(dbUpdateTriggerProvider);
-    final isOnline = ref.read(connectivityProvider).value ?? true;
-    final isOffline = !isOnline;
-
     try {
       if (!isOffline) {
         // 1. Try Live (Online First)
@@ -119,6 +119,9 @@ final balanceProvider = StreamProvider<int>((ref) {
       }
       throw Exception('Offline');
     } catch (e) {
+      if (!isOnline) {
+        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
+      }
       debugPrint('Desktop Balance fetch failed/offline: $e');
       // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
@@ -145,11 +148,10 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
         .map((list) => list.map((json) => Category.fromJson(json)).toList());
   }
 
-  return (() async* {
-    ref.watch(dbUpdateTriggerProvider);
-    final isOnline = ref.read(connectivityProvider).value ?? true;
-    final isOffline = !isOnline;
+  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  final isOffline = !isOnline;
 
+  return (() async* {
     try {
       if (!isOffline) {
         // Try Supabase Stream (Online First)
@@ -164,6 +166,9 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
       }
       throw Exception('Offline');
     } catch (e) {
+      if (!isOnline) {
+        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
+      }
       debugPrint('Desktop Categories Stream failed/offline: $e');
       // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
@@ -184,11 +189,10 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
         .map((list) => list.map((json) => Product.fromJson(json)).toList());
   }
 
-  return (() async* {
-    ref.watch(dbUpdateTriggerProvider);
-    final isOnline = ref.read(connectivityProvider).value ?? true;
-    final isOffline = !isOnline;
+  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  final isOffline = !isOnline;
 
+  return (() async* {
     try {
       if (!isOffline) {
         // Try Supabase Stream (Online First)
@@ -201,6 +205,9 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
       }
       throw Exception('Offline');
     } catch (e) {
+      if (!isOnline) {
+        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
+      }
       debugPrint('Desktop Product Stream failed/offline: $e');
       // Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
@@ -238,55 +245,56 @@ final todaySalesProvider = StreamProvider<double>((ref) {
         });
   }
 
-  ref.watch(dbUpdateTriggerProvider);
+  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  if (!isOnline) {
+    ref.watch(dbUpdateTriggerProvider);
+  }
 
   return (() async* {
-    ref.watch(dbUpdateTriggerProvider);
-    final isOnline =
-        ref.read(connectivityProvider).value ?? true; // Added for desktop logic
-
     try {
-      if (!isOnline) {
-        // Check connectivity for initial fetch
-        throw Exception('Offline');
-      }
-      // 1. Try Live (Online First)
-      final res = await supabase
-          .from('sales')
-          .select('total_price')
-          .gte('created_at', startOfDay)
-          .eq('cashier_id', user?.id ?? -1) // Added cashier_id
-          .timeout(const Duration(seconds: 3)); // Added timeout
-      double sum = 0;
-      for (var sale in res) {
-        sum += (sale['total_price'] as num).toDouble();
-      }
-      yield sum;
+      if (isOnline) {
+        // 1. Try Live (Online First)
+        final res = await supabase
+            .from('sales')
+            .select('total_price')
+            .gte('created_at', startOfDay)
+            .eq('cashier_id', user?.id ?? -1) // Added cashier_id
+            .timeout(const Duration(seconds: 3)); // Added timeout
+        double sum = 0;
+        for (var sale in res) {
+          sum += (sale['total_price'] as num).toDouble();
+        }
+        yield sum;
 
-      // 2. Stream for live updates
-      yield* supabase
-          .from('sales')
-          .stream(primaryKey: ['id'])
-          .timeout(const Duration(seconds: 3)) // Added timeout
-          .map((list) {
-            double sum = 0;
-            for (var sale in list) {
-              if (sale['created_at'].toString().startsWith(startOfDay) &&
-                  sale['cashier_id'] == user?.id) {
-                sum += (sale['total_price'] as num).toDouble();
+        // 2. Stream for live updates
+        yield* supabase
+            .from('sales')
+            .stream(primaryKey: ['id'])
+            .timeout(const Duration(seconds: 3)) // Added timeout
+            .map((list) {
+              double sum = 0;
+              for (var sale in list) {
+                if (sale['created_at'].toString().startsWith(startOfDay) &&
+                    sale['cashier_id'] == user?.id) {
+                  sum += (sale['total_price'] as num).toDouble();
+                }
               }
-            }
-            return sum;
-          });
+              return sum;
+            });
+        return;
+      }
+      throw Exception('Offline');
     } catch (e) {
+      if (!isOnline) {
+        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
+      }
       debugPrint('Live sales total fetch failed, fallback to local: $e');
       // 3. Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
-        where:
-            "date(created_at) = date(?) AND cashier_id = ?", // Modified for cashier_id and today
-        whereArgs: [today, user?.id ?? -1], // Modified for cashier_id and today
+        where: "date(created_at) = date(?) AND cashier_id = ?",
+        whereArgs: [today, user?.id ?? -1],
       );
       double sum = 0;
       for (var sale in response) {
@@ -324,42 +332,44 @@ final todaySalesCountProvider = StreamProvider<int>((ref) {
         );
   }
 
-  ref.watch(dbUpdateTriggerProvider);
+  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  if (!isOnline) {
+    ref.watch(dbUpdateTriggerProvider);
+  }
 
   return (() async* {
-    ref.watch(dbUpdateTriggerProvider);
-    final isOnline =
-        ref.read(connectivityProvider).value ?? true; // Added for desktop logic
-
     try {
-      if (!isOnline) {
-        // Check connectivity for initial fetch
-        throw Exception('Offline');
-      }
-      // 1. Try Live (Online First)
-      final response = await supabase
-          .from('sales')
-          .select('id')
-          .gte('created_at', startOfDay)
-          .eq('cashier_id', user?.id ?? -1) // Added cashier_id
-          .timeout(const Duration(seconds: 3)); // Added timeout
-      yield response.length;
+      if (isOnline) {
+        // 1. Try Live (Online First)
+        final response = await supabase
+            .from('sales')
+            .select('id')
+            .gte('created_at', startOfDay)
+            .eq('cashier_id', user?.id ?? -1) // Added cashier_id
+            .timeout(const Duration(seconds: 3)); // Added timeout
+        yield response.length;
 
-      // 2. Stream for live updates
-      yield* supabase
-          .from('sales')
-          .stream(primaryKey: ['id'])
-          .timeout(const Duration(seconds: 3)) // Added timeout
-          .map(
-            (list) => list
-                .where(
-                  (sale) =>
-                      sale['created_at'].toString().startsWith(startOfDay) &&
-                      sale['cashier_id'] == user?.id,
-                )
-                .length,
-          );
+        // 2. Stream for live updates
+        yield* supabase
+            .from('sales')
+            .stream(primaryKey: ['id'])
+            .timeout(const Duration(seconds: 3)) // Added timeout
+            .map(
+              (list) => list
+                  .where(
+                    (sale) =>
+                        sale['created_at'].toString().startsWith(startOfDay) &&
+                        sale['cashier_id'] == user?.id,
+                  )
+                  .length,
+            );
+        return;
+      }
+      throw Exception('Offline');
     } catch (e) {
+      if (!isOnline) {
+        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
+      }
       debugPrint('Live sales count fetch failed, fallback to local: $e');
       // 3. Fallback to Local (Offline)
       final db = await LocalDatabase.instance.database;
@@ -708,7 +718,7 @@ class CheckoutRepository {
 
       ref.read(cartProvider.notifier).clear();
       ref.invalidate(balanceProvider);
-      ref.invalidate(productsProvider);
+      // ref.invalidate(productsProvider); // Removed to prevent flickering while online
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
       return saleId;
@@ -746,6 +756,9 @@ class CheckoutRepository {
         }
 
         ref.read(cartProvider.notifier).clear();
+        ref
+            .read(dbUpdateTriggerProvider.notifier)
+            .trigger(); // Explicitly trigger update for offline UI
         ref.invalidate(balanceProvider);
         ref.invalidate(productsProvider);
         ref.invalidate(todaySalesProvider);
