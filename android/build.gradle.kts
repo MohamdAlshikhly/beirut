@@ -20,7 +20,7 @@ subprojects {
     afterEvaluate {
         val android = project.extensions.findByName("android") as? com.android.build.gradle.BaseExtension
         if (android != null) {
-            // FIX 1: Set missing namespace
+            // FIX 1: Set missing namespace ONLY if it is null
             if (android.namespace == null) {
                 val defaultNamespace = "com.github.mohamdalshikhly.${project.name.replace("-", ".")}"
                 android.namespace = defaultNamespace
