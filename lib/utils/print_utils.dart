@@ -26,6 +26,7 @@ class PrintUtils {
       builder: (ctx) {
         PrinterDevice? selectedDevice;
         PrinterProtocol selectedProtocol = PrinterProtocol.escPos;
+        bool hasAutoPrinted = false;
 
         return StatefulBuilder(
           builder: (context, setState) {
@@ -43,6 +44,7 @@ class PrintUtils {
                       setState(() {
                         scanCount++;
                         selectedDevice = null;
+                        hasAutoPrinted = false;
                       });
                     },
                     tooltip: 'تحديث البحث',
@@ -61,6 +63,30 @@ class PrintUtils {
                     final availablePrinters = snapshot.data ?? [];
                     final isScanning =
                         snapshot.connectionState == ConnectionState.waiting;
+
+                    // Auto-select and print if a printer is found
+                    if (!isScanning &&
+                        availablePrinters.isNotEmpty &&
+                        !hasAutoPrinted) {
+                      hasAutoPrinted = true;
+                      selectedDevice = availablePrinters.first;
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (context.mounted) {
+                          _triggerPrint(
+                            context,
+                            ref,
+                            itemsToPrint,
+                            total,
+                            selectedDevice,
+                            saleId,
+                            null,
+                            selectedProtocol,
+                            receiptKey,
+                          );
+                          Navigator.pop(ctx);
+                        }
+                      });
+                    }
 
                     return Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -114,8 +140,8 @@ class PrintUtils {
                                                   Image.asset(
                                                     'assets/images/logo.png',
                                                     color: Colors.black,
-                                                    width: 50,
-                                                    height: 50,
+                                                    width: 40,
+                                                    height: 40,
                                                   ),
                                                   const SizedBox(width: 12),
                                                   const Text(
@@ -124,7 +150,7 @@ class PrintUtils {
                                                       color: Colors.black,
                                                       fontWeight:
                                                           FontWeight.bold,
-                                                      fontSize: 55,
+                                                      fontSize: 40,
                                                       fontFamily: 'Alvatan',
                                                     ),
                                                   ),
