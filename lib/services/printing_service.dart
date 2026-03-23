@@ -2,10 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter_pos_printer_platform/flutter_pos_printer_platform.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart';
 import '../providers/data_providers.dart';
-import 'package:enough_convert/enough_convert.dart';
 import 'package:image/image.dart' as img;
 
 enum PrinterProtocol { tspl, escPos }
@@ -209,62 +207,5 @@ class PrintingService {
     }
     bytes.addAll(utf8.encode('\r\nPRINT 1,1\r\n'));
     return bytes;
-  }
-
-  Future<Uint8List> _generateTsplBytes(
-    List<CartItem> items,
-    double total, {
-    int? saleId,
-  }) async {
-    final currencyFormatter = NumberFormat('#,##0', 'en_US');
-    final dateFormatter = DateFormat('yyyy-MM-dd HH:mm');
-    StringBuffer tspl = StringBuffer();
-
-    int height = 500 + (items.length * 40);
-    tspl.writeln('SIZE 80 mm, ${height / 8} mm');
-    tspl.writeln('GAP 0,0');
-    tspl.writeln('DIRECTION 1');
-    tspl.writeln('CLS');
-
-    int y = 30;
-    tspl.writeln('TEXT 400, $y, "FONT001", 0, 2, 2, "دكان بيروت"');
-    y += 60;
-
-    if (saleId != null) {
-      tspl.writeln('TEXT 40, $y, "FONT001", 0, 1, 1, "Invoice: #$saleId"');
-      y += 40;
-    }
-    tspl.writeln(
-      'TEXT 40, $y, "FONT001", 0, 1, 1, "Date: ${dateFormatter.format(DateTime.now())}"',
-    );
-    y += 50;
-    tspl.writeln('BAR 40, $y, 500, 2');
-    y += 20;
-
-    for (var item in items) {
-      String name = item.product.name;
-      if (name.length > 20) name = name.substring(0, 17) + '...';
-      tspl.writeln('TEXT 40, $y, "FONT001", 0, 1, 1, "$name"');
-      tspl.writeln('TEXT 320, $y, "FONT001", 0, 1, 1, "${item.quantity}"');
-      tspl.writeln(
-        'TEXT 450, $y, "FONT001", 0, 1, 1, "${currencyFormatter.format(item.product.price)}"',
-      );
-      y += 40;
-    }
-
-    y += 20;
-    tspl.writeln('BAR 40, $y, 500, 2');
-    y += 30;
-    tspl.writeln(
-      'TEXT 40, $y, "FONT001", 0, 2, 2, "TOTAL: ${currencyFormatter.format(total)} IQD"',
-    );
-    tspl.writeln('PRINT 1, 1');
-
-    try {
-      const codec = Windows1256Codec();
-      return Uint8List.fromList(codec.encode(tspl.toString()));
-    } catch (e) {
-      return Uint8List.fromList(utf8.encode(tspl.toString()));
-    }
   }
 }
