@@ -33,16 +33,34 @@ final searchQueryProvider = NotifierProvider<SearchQueryNotifier, String>(() {
   return SearchQueryNotifier();
 });
 
-class ProductGrid extends ConsumerWidget {
+class ProductGrid extends ConsumerStatefulWidget {
   const ProductGrid({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProductGrid> createState() => _ProductGridState();
+}
+
+class _ProductGridState extends ConsumerState<ProductGrid> {
+  late ScrollController _categoryScrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _categoryScrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _categoryScrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final productsAsync = ref.watch(productsProvider);
     final categoriesAsync = ref.watch(categoriesProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final searchQuery = ref.watch(searchQueryProvider);
-    final categoryScrollController = ScrollController();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -78,10 +96,10 @@ class ProductGrid extends ConsumerWidget {
                 flex: 2,
                 child: categoriesAsync.when(
                   data: (categories) => Scrollbar(
-                    controller: categoryScrollController,
+                    controller: _categoryScrollController,
                     thumbVisibility: true,
                     child: SingleChildScrollView(
-                      controller: categoryScrollController,
+                      controller: _categoryScrollController,
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(

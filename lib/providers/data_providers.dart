@@ -34,8 +34,30 @@ final connectivityProvider = StreamProvider<bool>((ref) async* {
 });
 
 /// Intermediate provider to deduplicate connectivity signals and prevent unnecessary rebuilds.
-final isOnlineProvider = Provider<bool>((ref) {
-  return ref.watch(connectivityProvider).value ?? true;
+/// Uses a Notifier to ensure strict equality check and avoid flickering while online.
+class ConnectivityNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    final connectivity = Connectivity();
+
+    // Initial check
+    connectivity.checkConnectivity().then((result) {
+      final isOnline = !result.contains(ConnectivityResult.none);
+      if (state != isOnline) state = isOnline;
+    });
+
+    // Listen for changes
+    connectivity.onConnectivityChanged.listen((result) {
+      final isOnline = !result.contains(ConnectivityResult.none);
+      if (state != isOnline) state = isOnline;
+    });
+
+    return true; // Initial assumption
+  }
+}
+
+final isOnlineProvider = NotifierProvider<ConnectivityNotifier, bool>(() {
+  return ConnectivityNotifier();
 });
 
 class AuthNotifier extends Notifier<AppUser?> {

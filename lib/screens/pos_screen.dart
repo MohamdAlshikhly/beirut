@@ -221,8 +221,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final connectivityVal = ref.watch(connectivityProvider);
-    final isOnline = connectivityVal.value ?? true;
+    final isOnline = ref.watch(isOnlineProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
