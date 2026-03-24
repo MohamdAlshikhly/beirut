@@ -33,6 +33,11 @@ final connectivityProvider = StreamProvider<bool>((ref) async* {
   }
 });
 
+/// Intermediate provider to deduplicate connectivity signals and prevent unnecessary rebuilds.
+final isOnlineProvider = Provider<bool>((ref) {
+  return ref.watch(connectivityProvider).value ?? true;
+});
+
 class AuthNotifier extends Notifier<AppUser?> {
   @override
   AppUser? build() {
@@ -96,7 +101,7 @@ final balanceProvider = StreamProvider<int>((ref) {
   }
 
   // Computer is LIVE-FIRST with FALLBACK
-  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  final isOnline = ref.watch(isOnlineProvider);
   if (!isOnline) {
     ref.watch(dbUpdateTriggerProvider);
   }
@@ -148,7 +153,7 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
         .map((list) => list.map((json) => Category.fromJson(json)).toList());
   }
 
-  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  final isOnline = ref.watch(isOnlineProvider);
   final isOffline = !isOnline;
 
   return (() async* {
@@ -189,7 +194,7 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
         .map((list) => list.map((json) => Product.fromJson(json)).toList());
   }
 
-  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  final isOnline = ref.watch(isOnlineProvider);
   final isOffline = !isOnline;
 
   return (() async* {
@@ -245,7 +250,7 @@ final todaySalesProvider = StreamProvider<double>((ref) {
         });
   }
 
-  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  final isOnline = ref.watch(isOnlineProvider);
   if (!isOnline) {
     ref.watch(dbUpdateTriggerProvider);
   }
@@ -332,7 +337,7 @@ final todaySalesCountProvider = StreamProvider<int>((ref) {
         );
   }
 
-  final isOnline = ref.watch(connectivityProvider).value ?? true;
+  final isOnline = ref.watch(isOnlineProvider);
   if (!isOnline) {
     ref.watch(dbUpdateTriggerProvider);
   }

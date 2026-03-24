@@ -42,6 +42,7 @@ class ProductGrid extends ConsumerWidget {
     final categoriesAsync = ref.watch(categoriesProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final searchQuery = ref.watch(searchQueryProvider);
+    final categoryScrollController = ScrollController();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -77,8 +78,10 @@ class ProductGrid extends ConsumerWidget {
                 flex: 2,
                 child: categoriesAsync.when(
                   data: (categories) => Scrollbar(
+                    controller: categoryScrollController,
                     thumbVisibility: true,
                     child: SingleChildScrollView(
+                      controller: categoryScrollController,
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(
