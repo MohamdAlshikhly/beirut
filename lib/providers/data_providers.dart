@@ -176,28 +176,23 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
   }
 
   final isOnline = ref.watch(isOnlineProvider);
-  final isOffline = !isOnline;
+  // Manual refresh trigger
+  ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
-      if (!isOffline) {
-        // Try Supabase Stream (Online First)
-        yield* supabase
+      if (isOnline) {
+        // Fetch once on refresh/trigger
+        final response = await supabase
             .from('categories')
-            .stream(primaryKey: ['id'])
-            .timeout(const Duration(seconds: 3))
-            .map(
-              (list) => list.map((json) => Category.fromJson(json)).toList(),
-            );
-        return; // Success, don't proceed to local fallback
+            .select()
+            .timeout(const Duration(seconds: 5));
+        yield response.map((json) => Category.fromJson(json)).toList();
+        return;
       }
       throw Exception('Offline');
     } catch (e) {
-      if (!isOnline) {
-        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
-      }
-      debugPrint('Desktop Categories Stream failed/offline: $e');
-      // Fallback to Local (Offline)
+      debugPrint('Desktop Categories Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query('categories');
       yield response.map((json) => Category.fromJson(json)).toList();
@@ -217,26 +212,23 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
   }
 
   final isOnline = ref.watch(isOnlineProvider);
-  final isOffline = !isOnline;
+  // Manual refresh trigger
+  ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
-      if (!isOffline) {
-        // Try Supabase Stream (Online First)
-        yield* supabase
+      if (isOnline) {
+        // Fetch once on refresh/trigger
+        final response = await supabase
             .from('products')
-            .stream(primaryKey: ['id'])
-            .timeout(const Duration(seconds: 3))
-            .map((list) => list.map((json) => Product.fromJson(json)).toList());
-        return; // Success
+            .select()
+            .timeout(const Duration(seconds: 5));
+        yield response.map((json) => Product.fromJson(json)).toList();
+        return;
       }
       throw Exception('Offline');
     } catch (e) {
-      if (!isOnline) {
-        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
-      }
-      debugPrint('Desktop Product Stream failed/offline: $e');
-      // Fallback to Local (Offline)
+      debugPrint('Desktop Products Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query('products');
       yield response.map((json) => Product.fromJson(json)).toList();
@@ -273,50 +265,29 @@ final todaySalesProvider = StreamProvider<double>((ref) {
   }
 
   final isOnline = ref.watch(isOnlineProvider);
-  if (!isOnline) {
-    ref.watch(dbUpdateTriggerProvider);
-  }
+  // Always watch the trigger on desktop for manual refresh
+  ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
       if (isOnline) {
-        // 1. Try Live (Online First)
+        // 1. Fetch once
         final res = await supabase
             .from('sales')
             .select('total_price')
             .gte('created_at', startOfDay)
-            .eq('cashier_id', user?.id ?? -1) // Added cashier_id
-            .timeout(const Duration(seconds: 3)); // Added timeout
+            .eq('cashier_id', user?.id ?? -1)
+            .timeout(const Duration(seconds: 5));
         double sum = 0;
         for (var sale in res) {
           sum += (sale['total_price'] as num).toDouble();
         }
         yield sum;
-
-        // 2. Stream for live updates
-        yield* supabase
-            .from('sales')
-            .stream(primaryKey: ['id'])
-            .timeout(const Duration(seconds: 3)) // Added timeout
-            .map((list) {
-              double sum = 0;
-              for (var sale in list) {
-                if (sale['created_at'].toString().startsWith(startOfDay) &&
-                    sale['cashier_id'] == user?.id) {
-                  sum += (sale['total_price'] as num).toDouble();
-                }
-              }
-              return sum;
-            });
         return;
       }
       throw Exception('Offline');
     } catch (e) {
-      if (!isOnline) {
-        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
-      }
-      debugPrint('Live sales total fetch failed, fallback to local: $e');
-      // 3. Fallback to Local (Offline)
+      debugPrint('Desktop Today Sales Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
@@ -360,53 +331,33 @@ final todaySalesCountProvider = StreamProvider<int>((ref) {
   }
 
   final isOnline = ref.watch(isOnlineProvider);
-  if (!isOnline) {
-    ref.watch(dbUpdateTriggerProvider);
-  }
+  // Always watch the trigger on desktop for manual refresh
+  ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
       if (isOnline) {
-        // 1. Try Live (Online First)
+        // Fetch once
         final response = await supabase
             .from('sales')
             .select('id')
             .gte('created_at', startOfDay)
-            .eq('cashier_id', user?.id ?? -1) // Added cashier_id
-            .timeout(const Duration(seconds: 3)); // Added timeout
+            .eq('cashier_id', user?.id ?? -1)
+            .timeout(const Duration(seconds: 5));
         yield response.length;
-
-        // 2. Stream for live updates
-        yield* supabase
-            .from('sales')
-            .stream(primaryKey: ['id'])
-            .timeout(const Duration(seconds: 3)) // Added timeout
-            .map(
-              (list) => list
-                  .where(
-                    (sale) =>
-                        sale['created_at'].toString().startsWith(startOfDay) &&
-                        sale['cashier_id'] == user?.id,
-                  )
-                  .length,
-            );
         return;
       }
       throw Exception('Offline');
     } catch (e) {
-      if (!isOnline) {
-        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
-      }
-      debugPrint('Live sales count fetch failed, fallback to local: $e');
-      // 3. Fallback to Local (Offline)
+      debugPrint('Desktop Today Sales Count Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
-      final res = await db.query(
+      final response = await db.query(
         'sales',
         columns: ['id'],
         where: "date(created_at) = date(?) AND cashier_id = ?",
         whereArgs: [today, user?.id ?? -1],
       );
-      yield res.length;
+      yield response.length;
     }
   })();
 });
