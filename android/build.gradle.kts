@@ -30,7 +30,13 @@ subprojects {
                     val packageMatcher = Regex("package=\"([^\"]*)\"").find(content)
                     val originalPackage = packageMatcher?.groupValues?.get(1)
                     
-                    if (originalPackage != null) {
+                    if (project.name == "flutter_pos_printer_platform") {
+                        android.namespace = "com.sersoluciones.flutter_pos_printer_platform"
+                        println("Enforcing CORRECT namespace for flutter_pos_printer_platform: ${android.namespace}")
+                    } else if (project.name == "network_info_plus") {
+                        android.namespace = "dev.fluttercommunity.plus.network_info"
+                        println("Enforcing CORRECT namespace for network_info_plus: ${android.namespace}")
+                    } else if (originalPackage != null) {
                         // 2. Set as namespace so R class is generated in the correct place
                         android.namespace = originalPackage
                         println("Syncing namespace for ${project.name} with $originalPackage")
