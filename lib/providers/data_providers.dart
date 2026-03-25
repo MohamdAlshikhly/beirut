@@ -194,21 +194,25 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
 final todaySalesProvider = StreamProvider<double>((ref) {
   final supabase = ref.read(supabaseProvider);
   final now = DateTime.now();
-  final startOfDay = DateFormat('yyyy-MM-dd').format(now);
+  // startOfDayUtc: midnight today local -> convert to UTC ISO8601
+  final startOfDayUtc = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).toUtc().toIso8601String();
   final user = ref.watch(authProvider);
-  final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+  final todayLocal = DateFormat('yyyy-MM-dd').format(now);
   final isOnline = ref.watch(isOnlineProvider);
-  // Always watch the trigger on desktop for manual refresh
+  // Always watch the trigger for manual refresh
   ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
       if (isOnline) {
-        // 1. Fetch once
         final res = await supabase
             .from('sales')
             .select('total_price')
-            .gte('created_at', startOfDay)
+            .gte('created_at', startOfDayUtc)
             .eq('user_id', user?.id ?? -1)
             .timeout(const Duration(seconds: 5));
         double sum = 0;
@@ -224,8 +228,8 @@ final todaySalesProvider = StreamProvider<double>((ref) {
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
-        where: "date(created_at) = date(?) AND user_id = ?",
-        whereArgs: [today, user?.id ?? -1],
+        where: "date(created_at, '+3 hours') = date(?) AND user_id = ?",
+        whereArgs: [todayLocal, user?.id ?? -1],
       );
       double sum = 0;
       for (var sale in response) {
@@ -239,24 +243,27 @@ final todaySalesProvider = StreamProvider<double>((ref) {
 final todaySalesCountProvider = StreamProvider<int>((ref) {
   final supabase = ref.read(supabaseProvider);
   final now = DateTime.now();
-  final startOfDay = DateFormat('yyyy-MM-dd').format(now);
+  final startOfDayUtc = DateTime(
+    now.year,
+    now.month,
+    now.day,
+  ).toUtc().toIso8601String();
   final user = ref.watch(authProvider);
-  final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+  final todayLocal = DateFormat('yyyy-MM-dd').format(now);
   final isOnline = ref.watch(isOnlineProvider);
-  // Always watch the trigger on desktop for manual refresh
+  // Always watch the trigger for manual refresh
   ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
       if (isOnline) {
-        // Fetch once
-        final response = await supabase
+        final res = await supabase
             .from('sales')
             .select('id')
-            .gte('created_at', startOfDay)
+            .gte('created_at', startOfDayUtc)
             .eq('user_id', user?.id ?? -1)
             .timeout(const Duration(seconds: 5));
-        yield response.length;
+        yield (res as List).length;
         return;
       }
       throw Exception('Offline');
@@ -266,8 +273,8 @@ final todaySalesCountProvider = StreamProvider<int>((ref) {
       final response = await db.query(
         'sales',
         columns: ['id'],
-        where: "date(created_at) = date(?) AND user_id = ?",
-        whereArgs: [today, user?.id ?? -1],
+        where: "date(created_at, '+3 hours') = date(?) AND user_id = ?",
+        whereArgs: [todayLocal, user?.id ?? -1],
       );
       yield response.length;
     }

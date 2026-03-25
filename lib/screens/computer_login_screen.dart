@@ -21,11 +21,21 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
   final String _sessionId = const Uuid().v4();
   bool _isLoggingIn = false;
   StreamSubscription? _realtimeSubscription;
+  Timer? _pollingTimer;
 
   @override
   void initState() {
     super.initState();
     _setupRealtimeListener();
+    _startPolling();
+  }
+
+  void _startPolling() {
+    _pollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!_isLoggingIn && mounted) {
+        _checkManually(silent: true);
+      }
+    });
   }
 
   void _setupRealtimeListener() {
@@ -63,14 +73,8 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
 
       if (mounted) {
         ref.read(authProvider.notifier).login(user);
-
-        // Clean up: delete the session record after successful login
-        client
-            .from('sessions')
-            .delete()
-            .eq('session_code', _sessionId)
-            .then((_) => debugPrint('Session cleaned up'))
-            .catchError((e) => debugPrint('Session cleanup error: $e'));
+        // We no longer delete the session record so it can be monitored.
+        debugPrint('Login successful for ${user.name}');
       }
     } catch (e) {
       debugPrint('Login Session Error: $e');
@@ -86,7 +90,7 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
     }
   }
 
-  Future<void> _checkManually() async {
+  Future<void> _checkManually({bool silent = false}) async {
     if (_isLoggingIn || !mounted) return;
 
     try {
@@ -95,12 +99,13 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
           .from('sessions')
           .select()
           .eq('session_code', _sessionId)
+          .limit(1)
           .maybeSingle();
 
       if (res != null) {
         await _processSessionRow(res);
       } else {
-        if (mounted) {
+        if (mounted && !silent) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
@@ -111,8 +116,8 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
         }
       }
     } catch (e) {
-      debugPrint('Manual Check Error: $e');
-      if (mounted) {
+      if (!silent) debugPrint('Manual Check Error: $e');
+      if (mounted && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('حدث خطأ في التحقق: $e'),
@@ -126,6 +131,7 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
   @override
   void dispose() {
     _realtimeSubscription?.cancel();
+    _pollingTimer?.cancel();
     super.dispose();
   }
 
@@ -200,7 +206,7 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
                   Tooltip(
                     message: 'تحقق يدوي في حال فشل التلقائي',
                     child: IconButton(
-                      onPressed: _checkManually,
+                      onPressed: () => _checkManually(silent: false),
                       icon: const Icon(
                         PhosphorIconsBold.arrowsClockwise,
                         color: Colors.white54,
