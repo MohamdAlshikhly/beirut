@@ -213,7 +213,7 @@ final todaySalesProvider = StreamProvider<double>((ref) {
             .from('sales')
             .select('total_price')
             .gte('created_at', startOfDay)
-            .eq('cashier_id', user?.id ?? -1)
+            .eq('user_id', user?.id ?? -1)
             .timeout(const Duration(seconds: 5));
         double sum = 0;
         for (var sale in res) {
@@ -224,11 +224,11 @@ final todaySalesProvider = StreamProvider<double>((ref) {
       }
       throw Exception('Offline');
     } catch (e) {
-      debugPrint('Desktop Today Sales Fetch failed/offline: $e');
+      debugPrint('Today Sales Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
-        where: "date(created_at) = date(?) AND cashier_id = ?",
+        where: "date(created_at) = date(?) AND user_id = ?",
         whereArgs: [today, user?.id ?? -1],
       );
       double sum = 0;
@@ -258,19 +258,19 @@ final todaySalesCountProvider = StreamProvider<int>((ref) {
             .from('sales')
             .select('id')
             .gte('created_at', startOfDay)
-            .eq('cashier_id', user?.id ?? -1)
+            .eq('user_id', user?.id ?? -1)
             .timeout(const Duration(seconds: 5));
         yield response.length;
         return;
       }
       throw Exception('Offline');
     } catch (e) {
-      debugPrint('Desktop Today Sales Count Fetch failed/offline: $e');
+      debugPrint('Today Sales Count Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'sales',
         columns: ['id'],
-        where: "date(created_at) = date(?) AND cashier_id = ?",
+        where: "date(created_at) = date(?) AND user_id = ?",
         whereArgs: [today, user?.id ?? -1],
       );
       yield response.length;
