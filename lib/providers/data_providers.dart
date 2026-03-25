@@ -106,51 +106,28 @@ final dbUpdateTriggerProvider = NotifierProvider<DbUpdateTrigger, int>(() {
 });
 
 final balanceProvider = StreamProvider<int>((ref) {
-  final isMobile = ref.watch(isMobileProvider);
   final supabase = ref.read(supabaseProvider);
-
-  if (isMobile) {
-    // Mobile is ALWAYS Live & REAL-TIME
-    return supabase
-        .from('balance')
-        .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false)
-        .limit(1)
-        .map(
-          (list) =>
-              list.isEmpty ? 0 : list.first['currentBalance'] as int? ?? 0,
-        );
-  }
-
-  // Computer is LIVE-FIRST with FALLBACK
   final isOnline = ref.watch(isOnlineProvider);
-  if (!isOnline) {
-    ref.watch(dbUpdateTriggerProvider);
-  }
-  final isOffline = !isOnline;
+  // Manual refresh trigger
+  ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
-      if (!isOffline) {
-        // 1. Try Live (Online First)
+      if (isOnline) {
         final response = await supabase
             .from('balance')
             .select('currentBalance')
             .order('created_at', ascending: false)
             .limit(1)
             .maybeSingle()
-            .timeout(const Duration(seconds: 3));
+            .timeout(const Duration(seconds: 5));
 
         yield response?['currentBalance'] as int? ?? 0;
         return;
       }
       throw Exception('Offline');
     } catch (e) {
-      if (!isOnline) {
-        ref.watch(dbUpdateTriggerProvider); // Only watch when offline
-      }
-      debugPrint('Desktop Balance fetch failed/offline: $e');
-      // Fallback to Local (Offline)
+      debugPrint('Balance fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query(
         'balance',
@@ -165,16 +142,7 @@ final balanceProvider = StreamProvider<int>((ref) {
 });
 
 final categoriesProvider = StreamProvider<List<Category>>((ref) {
-  final isMobile = ref.watch(isMobileProvider);
   final supabase = ref.read(supabaseProvider);
-
-  if (isMobile) {
-    return supabase
-        .from('categories')
-        .stream(primaryKey: ['id'])
-        .map((list) => list.map((json) => Category.fromJson(json)).toList());
-  }
-
   final isOnline = ref.watch(isOnlineProvider);
   // Manual refresh trigger
   ref.watch(dbUpdateTriggerProvider);
@@ -192,7 +160,7 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
       }
       throw Exception('Offline');
     } catch (e) {
-      debugPrint('Desktop Categories Fetch failed/offline: $e');
+      debugPrint('Categories Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query('categories');
       yield response.map((json) => Category.fromJson(json)).toList();
@@ -201,16 +169,7 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
 });
 
 final productsProvider = StreamProvider<List<Product>>((ref) {
-  final isMobile = ref.watch(isMobileProvider);
   final supabase = ref.read(supabaseProvider);
-
-  if (isMobile) {
-    return supabase
-        .from('products')
-        .stream(primaryKey: ['id'])
-        .map((list) => list.map((json) => Product.fromJson(json)).toList());
-  }
-
   final isOnline = ref.watch(isOnlineProvider);
   // Manual refresh trigger
   ref.watch(dbUpdateTriggerProvider);
@@ -228,7 +187,7 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
       }
       throw Exception('Offline');
     } catch (e) {
-      debugPrint('Desktop Products Fetch failed/offline: $e');
+      debugPrint('Products Fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
       final response = await db.query('products');
       yield response.map((json) => Product.fromJson(json)).toList();
@@ -237,33 +196,11 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
 });
 
 final todaySalesProvider = StreamProvider<double>((ref) {
-  final isMobile = ref.watch(isMobileProvider);
   final supabase = ref.read(supabaseProvider);
   final now = DateTime.now();
   final startOfDay = DateFormat('yyyy-MM-dd').format(now);
-  final user = ref.watch(authProvider); // Added for cashier_id
-  final today = DateFormat(
-    'yyyy-MM-dd',
-  ).format(DateTime.now()); // Added for local query
-
-  if (isMobile) {
-    debugPrint('DEBUG: MOBILE REAL-TIME STREAM FOR TODAY SALES');
-    return supabase
-        .from('sales')
-        .stream(primaryKey: ['id'])
-        .timeout(const Duration(seconds: 3)) // Added timeout
-        .map((list) {
-          double sum = 0;
-          for (var sale in list) {
-            if (sale['created_at'].toString().startsWith(startOfDay) &&
-                sale['cashier_id'] == user?.id) {
-              sum += (sale['total_price'] as num).toDouble();
-            }
-          }
-          return sum;
-        });
-  }
-
+  final user = ref.watch(authProvider);
+  final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
   final isOnline = ref.watch(isOnlineProvider);
   // Always watch the trigger on desktop for manual refresh
   ref.watch(dbUpdateTriggerProvider);
@@ -304,32 +241,11 @@ final todaySalesProvider = StreamProvider<double>((ref) {
 });
 
 final todaySalesCountProvider = StreamProvider<int>((ref) {
-  final isMobile = ref.watch(isMobileProvider);
   final supabase = ref.read(supabaseProvider);
   final now = DateTime.now();
   final startOfDay = DateFormat('yyyy-MM-dd').format(now);
-  final user = ref.watch(authProvider); // Added for cashier_id
-  final today = DateFormat(
-    'yyyy-MM-dd',
-  ).format(DateTime.now()); // Added for local query
-
-  if (isMobile) {
-    debugPrint('DEBUG: MOBILE REAL-TIME STREAM FOR TODAY SALES COUNT');
-    return supabase
-        .from('sales')
-        .stream(primaryKey: ['id'])
-        .timeout(const Duration(seconds: 3)) // Added timeout
-        .map(
-          (list) => list
-              .where(
-                (sale) =>
-                    sale['created_at'].toString().startsWith(startOfDay) &&
-                    sale['cashier_id'] == user?.id,
-              )
-              .length,
-        );
-  }
-
+  final user = ref.watch(authProvider);
+  final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
   final isOnline = ref.watch(isOnlineProvider);
   // Always watch the trigger on desktop for manual refresh
   ref.watch(dbUpdateTriggerProvider);
