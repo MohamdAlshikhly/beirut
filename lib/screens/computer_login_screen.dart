@@ -73,8 +73,13 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
 
       if (mounted) {
         ref.read(authProvider.notifier).login(user);
+        // Save the current session ID for monitoring
+        ref.read(currentSessionIdProvider.notifier).set(sessionRow['id']);
+
         // We no longer delete the session record so it can be monitored.
-        debugPrint('Login successful for ${user.name}');
+        debugPrint(
+          'Login successful for ${user.name} (Session ID: ${sessionRow['id']})',
+        );
       }
     } catch (e) {
       debugPrint('Login Session Error: $e');

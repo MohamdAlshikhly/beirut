@@ -166,9 +166,7 @@ class PrintingService {
           if (x < width) {
             final pixel = image.getPixel(x, y);
             final luminance =
-                (0.299 * img.getRed(pixel) +
-                0.587 * img.getGreen(pixel) +
-                0.114 * img.getBlue(pixel));
+                (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
             if (luminance < 128) byte |= (0x80 >> bit);
           }
         }
@@ -196,9 +194,7 @@ class PrintingService {
           if (x < width) {
             final pixel = image.getPixel(x, y);
             final luminance =
-                (0.299 * img.getRed(pixel) +
-                0.587 * img.getGreen(pixel) +
-                0.114 * img.getBlue(pixel));
+                (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
             if (luminance < 128) byte |= (0x80 >> bit);
           }
         }

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../providers/data_providers.dart';
+import '../widgets/searchable_dropdown.dart';
+import '../models/models.dart';
 
 class AddCategoryDialog extends ConsumerStatefulWidget {
   const AddCategoryDialog({super.key});
@@ -129,15 +131,17 @@ class _AddProductDialogState extends ConsumerState<AddProductDialog> {
             ),
             const SizedBox(height: 8),
             categoriesAsync.when(
-              data: (categories) => DropdownButtonFormField<int>(
-                initialValue: _selectedCategoryId,
-                decoration: const InputDecoration(labelText: 'القسم'),
-                items: categories
-                    .map(
-                      (c) => DropdownMenuItem(value: c.id, child: Text(c.name)),
-                    )
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedCategoryId = v),
+              data: (categories) => SearchableDropdown<Category>(
+                items: categories,
+                value: _selectedCategoryId != null
+                    ? categories.firstWhere((c) => c.id == _selectedCategoryId)
+                    : null,
+                label: 'القسم',
+                hint: 'اختر القسم',
+                itemTitle: (c) => c.name,
+                onChanged: (v) => setState(() => _selectedCategoryId = v?.id),
+                searchMatcher: (c, q) =>
+                    c.name.toLowerCase().contains(q.toLowerCase()),
               ),
               loading: () => const CircularProgressIndicator(),
               error: (e, st) => const Text('Error loading categories'),

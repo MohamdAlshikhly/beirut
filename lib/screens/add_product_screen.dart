@@ -5,8 +5,9 @@ import 'package:image_picker/image_picker.dart';
 import '../providers/data_providers.dart';
 import '../utils/app_colors.dart';
 import '../services/local_database.dart';
-import '../services/sync_service.dart';
 import 'package:uuid/uuid.dart';
+import '../widgets/searchable_dropdown.dart';
+import '../models/models.dart';
 
 class AddProductScreen extends ConsumerStatefulWidget {
   final String? initialBarcode;
@@ -98,49 +99,66 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
 
       // 1. Try Online First
       try {
+        final initialQty = _qtyController.text.isNotEmpty
+            ? double.parse(_qtyController.text)
+            : 0.0;
+
+        // Insert at 0 quantity first, then move stock via linkage
+        final dataAtZero = Map<String, dynamic>.from(productData);
+        dataAtZero['quantity'] = 0.0;
+
         final onlineRes = await supabase
             .from('products')
-            .insert(productData)
+            .insert(dataAtZero)
             .select()
             .single();
 
-        // 2. Mirror to Local as Synced
+        final newId = onlineRes['id'];
+
+        // Mirror locally at 0
         await db.insert('products', {
-          ...productData,
-          'id': onlineRes['id'],
+          ...dataAtZero,
+          'id': newId,
           'is_synced': 1,
         });
+
+        // 2. Update Stock via Linkage (this handles base units automatically)
+        if (initialQty != 0) {
+          await ref
+              .read(checkoutProvider)
+              .updateStockWithLinkage(
+                productId: newId,
+                change: initialQty,
+                reason: 'الرصيد الابتدائي (مرتبط)',
+                isOnline: true,
+              );
+        }
 
         ref.invalidate(productsProvider);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('تمت إضافة المنتج أونلاين بنجاح!'),
+              content: Text('تمت إضافة المنتج بنجاح وتحديث الوحدات المرتبطة!'),
               backgroundColor: Colors.green,
             ),
           );
           Navigator.pop(context);
         }
-        return; // Success, exit
+        return;
       } catch (onlineError) {
         debugPrint('Online product save failed: $onlineError');
-      }
-
-      // 3. Fallback to Local (Offline)
-      await db.insert('products', {...productData, 'is_synced': 0});
-
-      ref
-          .read(syncServiceProvider)
-          .syncUp(); // Background sync when back online
-      ref.invalidate(productsProvider);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم حفظ المنتج أوفلاين (سيتم الرفـع لاحقاً)'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        Navigator.pop(context);
+        // FALLBACK TO LOCAL (Simple insert, linkage will sync later or user handles manually)
+        await db.insert('products', {...productData, 'is_synced': 0});
+        ref.invalidate(productsProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('تم حفظ المنتج أوفلاين (سيتم الرفـع لاحقاً)'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          Navigator.pop(context);
+        }
       }
     } catch (e) {
       debugPrint('Error: $e');
@@ -303,22 +321,20 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                       const SizedBox(width: 16),
                       Expanded(
                         child: categoriesAsync.when(
-                          data: (categories) => DropdownButtonFormField<int>(
-                            value: _selectedCategoryId,
-                            decoration: const InputDecoration(
-                              labelText: 'القسم',
-                              filled: true,
-                            ),
-                            items: categories
-                                .map(
-                                  (c) => DropdownMenuItem(
-                                    value: c.id,
-                                    child: Text(c.name),
-                                  ),
-                                )
-                                .toList(),
+                          data: (categories) => SearchableDropdown<Category>(
+                            items: categories,
+                            value: _selectedCategoryId != null
+                                ? categories.firstWhere(
+                                    (c) => c.id == _selectedCategoryId,
+                                  )
+                                : null,
+                            label: 'القسم',
+                            hint: 'اختر القسم',
+                            itemTitle: (c) => c.name,
                             onChanged: (v) =>
-                                setState(() => _selectedCategoryId = v),
+                                setState(() => _selectedCategoryId = v?.id),
+                            searchMatcher: (c, q) =>
+                                c.name.toLowerCase().contains(q.toLowerCase()),
                           ),
                           loading: () =>
                               const Center(child: CircularProgressIndicator()),
@@ -345,27 +361,20 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                       .when(
                         data: (products) {
                           // Filter out potential circular references (though simple one-level is fine)
-                          return DropdownButtonFormField<int>(
-                            value: _selectedBaseUnitId,
-                            isExpanded: true,
-                            decoration: const InputDecoration(
-                              labelText: 'المنتج الأساسي (الوحدة الأصغر)',
-                              filled: true,
-                            ),
-                            items: [
-                              const DropdownMenuItem(
-                                value: null,
-                                child: Text('لا يوجد (منتج أساسي مفرد)'),
-                              ),
-                              ...products.map(
-                                (p) => DropdownMenuItem(
-                                  value: p.id,
-                                  child: Text(p.name),
-                                ),
-                              ),
-                            ],
+                          return SearchableDropdown<Product>(
+                            items: products,
+                            value: _selectedBaseUnitId != null
+                                ? products.firstWhere(
+                                    (p) => p.id == _selectedBaseUnitId,
+                                  )
+                                : null,
+                            label: 'المنتج الأساسي (الوحدة الأصغر)',
+                            hint: 'لا يوجد (منتج أساسي مفرد)',
+                            itemTitle: (p) => p.name,
                             onChanged: (v) =>
-                                setState(() => _selectedBaseUnitId = v),
+                                setState(() => _selectedBaseUnitId = v?.id),
+                            searchMatcher: (p, q) =>
+                                p.name.toLowerCase().contains(q.toLowerCase()),
                           );
                         },
                         loading: () => const LinearProgressIndicator(),

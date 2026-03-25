@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../main.dart'; // To access global prefs
 import '../models/models.dart';
@@ -22,6 +23,52 @@ final isMobileProvider = Provider<bool>((ref) {
 final supabaseProvider = Provider<SupabaseClient>(
   (ref) => Supabase.instance.client,
 );
+
+class SelectedCategoryNotifier extends Notifier<int?> {
+  @override
+  int? build() => null;
+  void set(int? id) {
+    state = id;
+  }
+}
+
+final selectedCategoryProvider =
+    NotifierProvider<SelectedCategoryNotifier, int?>(() {
+      return SelectedCategoryNotifier();
+    });
+
+class PinnedCategoriesNotifier extends Notifier<List<int>> {
+  static const _key = 'pinned_categories';
+
+  @override
+  List<int> build() {
+    _load();
+    return [];
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList(_key) ?? [];
+    state = list.map(int.tryParse).whereType<int>().toList();
+  }
+
+  Future<void> togglePin(int id) async {
+    final newList = List<int>.from(state);
+    if (newList.contains(id)) {
+      newList.remove(id);
+    } else {
+      newList.add(id);
+    }
+    state = newList;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_key, newList.map((e) => e.toString()).toList());
+  }
+}
+
+final pinnedCategoriesProvider =
+    NotifierProvider<PinnedCategoriesNotifier, List<int>>(() {
+      return PinnedCategoriesNotifier();
+    });
 
 final connectivityProvider = StreamProvider<bool>((ref) async* {
   final connectivity = Connectivity();
@@ -151,7 +198,28 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
             .from('categories')
             .select()
             .timeout(const Duration(seconds: 5));
-        yield response.map((json) => Category.fromJson(json)).toList();
+        final categories = response
+            .map((json) => Category.fromJson(json))
+            .toList();
+
+        // Mirror locally to avoid foreign key errors when adding products
+        final db = await LocalDatabase.instance.database;
+        int insertedCount = 0;
+        for (var cat in response) {
+          try {
+            await db.insert('categories', {
+              'id': cat['id'],
+              'name': cat['name'],
+              'is_synced': 1,
+            }, conflictAlgorithm: ConflictAlgorithm.replace);
+            insertedCount++;
+          } catch (e) {
+            debugPrint('Failed to mirror category ${cat['id']}: $e');
+          }
+        }
+        debugPrint('Mirrored $insertedCount categories locally.');
+
+        yield categories;
         return;
       }
       throw Exception('Offline');
@@ -178,7 +246,40 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
             .from('products')
             .select()
             .timeout(const Duration(seconds: 5));
-        yield response.map((json) => Product.fromJson(json)).toList();
+        final products = response
+            .map((json) => Product.fromJson(json))
+            .toList();
+
+        // Mirror locally to avoid issues when using products offline
+        final db = await LocalDatabase.instance.database;
+        int insertedCount = 0;
+        for (var prod in response) {
+          try {
+            await db.insert('products', {
+              'id': prod['id'],
+              'name': prod['name'],
+              'barcode': prod['barcode'],
+              'price': (prod['price'] as num).toDouble(),
+              'cost_price': prod['cost_price'] != null
+                  ? (prod['cost_price'] as num).toDouble()
+                  : null,
+              'quantity': (prod['quantity'] as num).toDouble(),
+              'category_id': prod['category_id'],
+              'image_url': prod['image_url'],
+              'base_unit_id': prod['base_unit_id'],
+              'base_unit_conversion': prod['base_unit_conversion'] != null
+                  ? (prod['base_unit_conversion'] as num).toDouble()
+                  : 1.0,
+              'is_synced': 1,
+            }, conflictAlgorithm: ConflictAlgorithm.replace);
+            insertedCount++;
+          } catch (e) {
+            debugPrint('Failed to mirror product ${prod['id']}: $e');
+          }
+        }
+        debugPrint('Mirrored $insertedCount products locally.');
+
+        yield products;
         return;
       }
       throw Exception('Offline');
@@ -190,6 +291,26 @@ final productsProvider = StreamProvider<List<Product>>((ref) {
     }
   })();
 });
+
+class SessionNotifier extends Notifier<int?> {
+  @override
+  int? build() {
+    return prefs.getInt('current_session_id');
+  }
+
+  void set(int? id) {
+    state = id;
+    if (id == null) {
+      prefs.remove('current_session_id');
+    } else {
+      prefs.setInt('current_session_id', id);
+    }
+  }
+}
+
+final currentSessionIdProvider = NotifierProvider<SessionNotifier, int?>(
+  () => SessionNotifier(),
+);
 
 final todaySalesProvider = StreamProvider<double>((ref) {
   final supabase = ref.read(supabaseProvider);
@@ -343,13 +464,19 @@ final originalCartItemsProvider =
 class CartItem {
   final Product product;
   final double quantity;
+  final double? priceOverride;
 
-  CartItem({required this.product, required this.quantity});
+  CartItem({required this.product, required this.quantity, this.priceOverride});
 
-  CartItem copyWith({Product? product, double? quantity}) {
+  CartItem copyWith({
+    Product? product,
+    double? quantity,
+    double? priceOverride,
+  }) {
     return CartItem(
       product: product ?? this.product,
       quantity: quantity ?? this.quantity,
+      priceOverride: priceOverride ?? this.priceOverride,
     );
   }
 }
@@ -358,9 +485,10 @@ class CartNotifier extends Notifier<List<CartItem>> {
   @override
   List<CartItem> build() => [];
 
-  void addProduct(Product product) {
+  void addProduct(Product product, {double? priceOverride}) {
     final existingIndex = state.indexWhere(
-      (item) => item.product.id == product.id,
+      (item) =>
+          item.product.id == product.id && item.priceOverride == priceOverride,
     );
     if (existingIndex >= 0) {
       final updatedCart = [...state];
@@ -369,7 +497,10 @@ class CartNotifier extends Notifier<List<CartItem>> {
       );
       state = updatedCart;
     } else {
-      state = [...state, CartItem(product: product, quantity: 1)];
+      state = [
+        ...state,
+        CartItem(product: product, quantity: 1, priceOverride: priceOverride),
+      ];
     }
   }
 
@@ -408,8 +539,11 @@ class CartNotifier extends Notifier<List<CartItem>> {
     state = items;
   }
 
-  double get total =>
-      state.fold(0, (sum, item) => sum + (item.product.price * item.quantity));
+  double get total => state.fold(
+    0,
+    (sum, item) =>
+        sum + ((item.priceOverride ?? item.product.price) * item.quantity),
+  );
 }
 
 final cartProvider = NotifierProvider<CartNotifier, List<CartItem>>(() {
@@ -559,11 +693,12 @@ class CheckoutRepository {
 
       // 2. Insert Sale Items (Synchronously)
       for (final item in cartItems) {
+        final itemPrice = item.priceOverride ?? item.product.price;
         await supabase.from('sale_items').insert({
           'sale_id': saleId,
           'product_id': item.product.id,
           'quantity': item.quantity.toInt(),
-          'price': item.product.price,
+          'price': itemPrice,
         });
 
         // 3. Update Stock with Linkage (Remote) - Await each to be sure
@@ -599,11 +734,12 @@ class CheckoutRepository {
         });
 
         for (final item in cartItems) {
+          final itemPrice = item.priceOverride ?? item.product.price;
           await db.insert('sale_items', {
             'sale_id': localSaleId,
             'product_id': item.product.id,
             'quantity': item.quantity,
-            'price': item.product.price,
+            'price': itemPrice,
           });
         }
       } catch (localError) {
@@ -726,11 +862,12 @@ class CheckoutRepository {
       try {
         await supabase.from('sale_items').delete().eq('sale_id', saleId);
         for (final item in cartItems) {
+          final itemPrice = item.priceOverride ?? item.product.price;
           await supabase.from('sale_items').insert({
             'sale_id': saleId,
             'product_id': item.product.id,
             'quantity': item.quantity.toInt(),
-            'price': item.product.price,
+            'price': itemPrice,
           });
         }
         onlineSuccess = true;
@@ -779,11 +916,12 @@ class CheckoutRepository {
           whereArgs: [saleId],
         );
         for (final item in cartItems) {
+          final itemPrice = item.priceOverride ?? item.product.price;
           await db.insert('sale_items', {
             'sale_id': saleId,
             'product_id': item.product.id,
             'quantity': item.quantity,
-            'price': item.product.price,
+            'price': itemPrice,
           });
         }
       } catch (lErr) {
@@ -854,17 +992,18 @@ class CheckoutRepository {
                 where: 'sale_id = ? AND product_id = ?',
                 whereArgs: [saleId, productId],
               );
+              final itemPrice = newItem!.priceOverride ?? newItem.product.price;
               if (existing.isEmpty) {
                 await db.insert('sale_items', {
                   'sale_id': saleId,
                   'product_id': productId,
                   'quantity': newQty,
-                  'price': newItem!.product.price,
+                  'price': itemPrice,
                 });
               } else {
                 await db.update(
                   'sale_items',
-                  {'quantity': newQty},
+                  {'quantity': newQty, 'price': itemPrice},
                   where: 'sale_id = ? AND product_id = ?',
                   whereArgs: [saleId, productId],
                 );

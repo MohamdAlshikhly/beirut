@@ -8,19 +8,6 @@ import '../utils/app_colors.dart';
 import '../widgets/skeleton_container.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-class SelectedCategoryNotifier extends Notifier<int?> {
-  @override
-  int? build() => null;
-  void set(int? id) {
-    state = id;
-  }
-}
-
-final selectedCategoryProvider =
-    NotifierProvider<SelectedCategoryNotifier, int?>(() {
-      return SelectedCategoryNotifier();
-    });
-
 class SearchQueryNotifier extends Notifier<String> {
   @override
   String build() => '';
@@ -41,24 +28,11 @@ class ProductGrid extends ConsumerStatefulWidget {
 }
 
 class _ProductGridState extends ConsumerState<ProductGrid> {
-  late ScrollController _categoryScrollController;
-
-  @override
-  void initState() {
-    super.initState();
-    _categoryScrollController = ScrollController();
-  }
-
-  @override
-  void dispose() {
-    _categoryScrollController.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final productsAsync = ref.watch(productsProvider);
     final categoriesAsync = ref.watch(categoriesProvider);
+    final pinnedIds = ref.watch(pinnedCategoriesProvider);
     final selectedCategory = ref.watch(selectedCategoryProvider);
     final searchQuery = ref.watch(searchQueryProvider);
 
@@ -95,50 +69,71 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
               Expanded(
                 flex: 2,
                 child: categoriesAsync.when(
-                  data: (categories) => Scrollbar(
-                    controller: _categoryScrollController,
-                    thumbVisibility: true,
-                    child: SingleChildScrollView(
-                      controller: _categoryScrollController,
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          _CategoryChip(
-                            title: 'الكل',
-                            isSelected: selectedCategory == null,
-                            onTap: () => ref
-                                .read(selectedCategoryProvider.notifier)
-                                .set(null),
+                  data: (categories) {
+                    final pinned = categories
+                        .where((c) => pinnedIds.contains(c.id))
+                        .toList();
+                    final isHiddenSelected =
+                        selectedCategory != null &&
+                        !pinned.any((c) => c.id == selectedCategory);
+
+                    return Row(
+                      children: [
+                        IconButton(
+                          onPressed: () => _showManageCategoriesDialog(
+                            context,
+                            ref,
+                            categories,
                           ),
-                          ...categories.map(
-                            (cat) => Padding(
-                              padding: const EdgeInsets.only(right: 8.0),
-                              child: _CategoryChip(
-                                title: cat.name,
-                                isSelected: selectedCategory == cat.id,
-                                onTap: () => ref
-                                    .read(selectedCategoryProvider.notifier)
-                                    .set(cat.id),
-                              ),
+                          icon: const Icon(
+                            Icons.tune,
+                            color: AppColors.primary,
+                          ),
+                          tooltip: 'تخصيص الأقسام',
+                        ),
+                        _CategoryChip(
+                          title: 'الكل',
+                          isSelected: selectedCategory == null,
+                          onTap: () => ref
+                              .read(selectedCategoryProvider.notifier)
+                              .set(null),
+                        ),
+                        const SizedBox(width: 8),
+                        ...pinned.map(
+                          (cat) => Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: _CategoryChip(
+                              title: cat.name,
+                              isSelected: selectedCategory == cat.id,
+                              onTap: () => ref
+                                  .read(selectedCategoryProvider.notifier)
+                                  .set(cat.id),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  loading: () => SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: List.generate(
-                        6,
-                        (index) => const Padding(
-                          padding: EdgeInsets.only(right: 8.0),
-                          child: SkeletonContainer(
-                            width: 80,
-                            height: 40,
-                            borderRadius: BorderRadius.all(Radius.circular(20)),
+                        ),
+                        if (isHiddenSelected)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8.0),
+                            child: _CategoryChip(
+                              title: categories
+                                  .firstWhere((c) => c.id == selectedCategory)
+                                  .name,
+                              isSelected: true,
+                              onTap: () {},
+                            ),
                           ),
+                      ],
+                    );
+                  },
+                  loading: () => Row(
+                    children: List.generate(
+                      3,
+                      (index) => const Padding(
+                        padding: EdgeInsets.only(right: 8.0),
+                        child: SkeletonContainer(
+                          width: 60,
+                          height: 32,
+                          borderRadius: BorderRadius.all(Radius.circular(20)),
                         ),
                       ),
                     ),
@@ -242,6 +237,52 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
       ],
     );
   }
+
+  void _showManageCategoriesDialog(
+    BuildContext context,
+    WidgetRef ref,
+    List<Category> categories,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, _) {
+            final pinnedIds = ref.watch(pinnedCategoriesProvider);
+            return AlertDialog(
+              title: const Text('تخصيص الأقسام المفضلة'),
+              content: SizedBox(
+                width: 400,
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: categories.length,
+                  itemBuilder: (context, index) {
+                    final cat = categories[index];
+                    final isPinned = pinnedIds.contains(cat.id);
+                    return CheckboxListTile(
+                      title: Text(cat.name),
+                      value: isPinned,
+                      onChanged: (_) {
+                        ref
+                            .read(pinnedCategoriesProvider.notifier)
+                            .togglePin(cat.id);
+                      },
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('إغلاق'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
 }
 
 class _CategoryChip extends StatelessWidget {
@@ -305,8 +346,24 @@ class _ProductCard extends ConsumerWidget {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
-        onTap: () {
-          ref.read(cartProvider.notifier).addProduct(product);
+        onTap: () async {
+          final isRecharge =
+              product.name.contains('اسياسيل') ||
+              product.name.contains('زين') ||
+              product.name.contains('كورك') ||
+              product.name.contains('رصيد') ||
+              product.name.contains('كارت');
+
+          if (isRecharge) {
+            final amount = await _showAmountDialog(context);
+            if (amount != null && amount > 0) {
+              ref
+                  .read(cartProvider.notifier)
+                  .addProduct(product, priceOverride: amount);
+            }
+          } else {
+            ref.read(cartProvider.notifier).addProduct(product);
+          }
         },
         child: GlassContainer(
           borderRadius: BorderRadius.circular(20),
@@ -429,6 +486,45 @@ class _ProductCard extends ConsumerWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Future<double?> _showAmountDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    return showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('ادخل مبلغ الكرت لـ ${product.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          decoration: const InputDecoration(
+            suffixText: 'د.ع',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (val) {
+            Navigator.pop(ctx, double.tryParse(val));
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () =>
+                Navigator.pop(ctx, double.tryParse(controller.text)),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            child: const Text(
+              'إضافة',
+              style: TextStyle(color: AppColors.secondary),
+            ),
+          ),
+        ],
       ),
     );
   }

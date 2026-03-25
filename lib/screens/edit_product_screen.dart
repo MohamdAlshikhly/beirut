@@ -8,6 +8,7 @@ import '../providers/data_providers.dart';
 import '../utils/app_colors.dart';
 import '../utils/glass_container.dart';
 import 'package:uuid/uuid.dart';
+import '../widgets/searchable_dropdown.dart';
 
 class EditProductScreen extends ConsumerStatefulWidget {
   final Product product;
@@ -24,6 +25,8 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
   late TextEditingController _costPriceController;
   late TextEditingController _qtyController;
   int? _selectedCategoryId;
+  int? _selectedBaseUnitId;
+  late TextEditingController _conversionController;
   bool _isLoading = false;
   XFile? _pickedImage;
   String? _currentImageUrl;
@@ -44,6 +47,10 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
       text: widget.product.quantity.toString(),
     );
     _selectedCategoryId = widget.product.categoryId;
+    _selectedBaseUnitId = widget.product.baseUnitId;
+    _conversionController = TextEditingController(
+      text: widget.product.baseUnitConversion.toString(),
+    );
     _currentImageUrl = widget.product.imageUrl;
   }
 
@@ -84,6 +91,10 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
     try {
       final imageUrl = await _uploadImage();
       final supabase = ref.read(supabaseProvider);
+      final newQty = double.parse(_qtyController.text);
+      final oldQty = widget.product.quantity;
+      final diff = newQty - oldQty;
+
       await supabase
           .from('products')
           .update({
@@ -95,11 +106,26 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
             'cost_price': _costPriceController.text.isNotEmpty
                 ? double.parse(_costPriceController.text)
                 : null,
-            'quantity': double.parse(_qtyController.text),
+            // Note: We don't update quantity here directly to let linkage handle it if diff != 0
+            // but we update other linkage fields
             'category_id': _selectedCategoryId,
             'image_url': imageUrl,
+            'base_unit_id': _selectedBaseUnitId,
+            'base_unit_conversion':
+                double.tryParse(_conversionController.text) ?? 1.0,
           })
           .eq('id', widget.product.id);
+
+      if (diff != 0) {
+        await ref
+            .read(checkoutProvider)
+            .updateStockWithLinkage(
+              productId: widget.product.id,
+              change: diff,
+              reason: 'تعديل مخزون يدوي (مرتبط)',
+              isOnline: true,
+            );
+      }
 
       ref.invalidate(productsProvider);
       if (mounted) {
@@ -346,29 +372,78 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
                     ),
                     const SizedBox(height: 20),
                     categoriesAsync.when(
-                      data: (categories) => DropdownButtonFormField<int>(
-                        value: _selectedCategoryId,
-                        decoration: InputDecoration(
-                          labelText: 'القسم',
-                          prefixIcon: const Icon(PhosphorIconsRegular.folder),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        items: categories
-                            .map(
-                              (c) => DropdownMenuItem(
-                                value: c.id,
-                                child: Text(c.name),
-                              ),
-                            )
-                            .toList(),
+                      data: (categories) => SearchableDropdown<Category>(
+                        items: categories,
+                        value: _selectedCategoryId != null
+                            ? categories.firstWhere(
+                                (c) => c.id == _selectedCategoryId,
+                              )
+                            : null,
+                        label: 'القسم',
+                        hint: 'اختر القسم',
+                        itemTitle: (c) => c.name,
                         onChanged: (v) =>
-                            setState(() => _selectedCategoryId = v),
+                            setState(() => _selectedCategoryId = v?.id),
+                        searchMatcher: (c, q) =>
+                            c.name.toLowerCase().contains(q.toLowerCase()),
                       ),
                       loading: () => const LinearProgressIndicator(),
                       error: (e, st) => const Text('خطأ في تحميل الأقسام'),
                     ),
+                    const SizedBox(height: 24),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'ربط الوحدات (اختياري):',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ref
+                        .watch(productsProvider)
+                        .when(
+                          data: (products) {
+                            return SearchableDropdown<Product>(
+                              items: products
+                                  .where((p) => p.id != widget.product.id)
+                                  .toList(),
+                              value: _selectedBaseUnitId != null
+                                  ? products.firstWhere(
+                                      (p) => p.id == _selectedBaseUnitId,
+                                    )
+                                  : null,
+                              label: 'المنتج الأساسي (الوحدة الأصغر)',
+                              hint: 'لا يوجد (منتج أساسي مفرد)',
+                              itemTitle: (p) => p.name,
+                              onChanged: (v) =>
+                                  setState(() => _selectedBaseUnitId = v?.id),
+                              searchMatcher: (p, q) => p.name
+                                  .toLowerCase()
+                                  .contains(q.toLowerCase()),
+                            );
+                          },
+                          loading: () => const LinearProgressIndicator(),
+                          error: (e, st) => const Text('خطأ في تحميل المنتجات'),
+                        ),
+                    if (_selectedBaseUnitId != null) ...[
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _conversionController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: 'معامل التحويل',
+                          hintText: 'مثلاً: كارتون فيه 24 علبة تضع 24',
+                          prefixIcon: const Icon(PhosphorIconsRegular.equals),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

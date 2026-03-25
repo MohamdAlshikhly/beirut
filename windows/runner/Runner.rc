@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "beirut" "\0"
+            VALUE "CompanyName", "com.beirut" "\0"
+            VALUE "FileDescription", "دكان بيروت" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "beirut" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "beirut.exe" "\0"
-            VALUE "ProductName", "beirut" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 beirut. All rights reserved." "\0"
+            VALUE "OriginalFilename", "beirut_pos.exe" "\0"
+            VALUE "ProductName", "دكان بيروت" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -230,23 +230,10 @@ class SyncService {
           mapToSync['quantity'] = (mapToSync['quantity'] as num).toInt();
           await _supabase.from('sale_items').insert(mapToSync);
 
-          // Update Remote Stock
-          try {
-            final productId = itemMap['product_id'];
-            final soldQty = (itemMap['quantity'] as num).toDouble();
-            final remoteProd = await _supabase
-                .from('products')
-                .select('quantity')
-                .eq('id', productId)
-                .single();
-            final currentRemoteQty = (remoteProd['quantity'] as num).toDouble();
-            await _supabase
-                .from('products')
-                .update({'quantity': currentRemoteQty - soldQty})
-                .eq('id', productId);
-          } catch (stkErr) {
-            debugPrint('⚠️ Error updating remote stock for sale item: $stkErr');
-          }
+          // Update Remote Stock:
+          // We NO LONGER update stock here manually because we rely on the
+          // 'stock_movements' table sync below to handle all quantity changes
+          // (including linkage).
         }
 
         // Mark as synced locally
@@ -272,26 +259,25 @@ class SyncService {
 
         await _supabase.from('stock_movements').insert(movMap);
 
-        // If it's a manual stock movement (not from a sale), update remote stock
-        // (Movements from sales are already handled above in the sale items loop)
-        if (!(movMap['reason']?.toString().startsWith('Sale #') ?? false)) {
-          try {
-            final productId = movMap['product_id'];
-            final change = (movMap['change'] as num).toDouble();
-            final remoteProd = await _supabase
-                .from('products')
-                .select('quantity')
-                .eq('id', productId)
-                .single();
-            final currentRemoteQty = (remoteProd['quantity'] as num).toDouble();
-            await _supabase
-                .from('products')
-                .update({'quantity': currentRemoteQty + change})
-                .eq('id', productId);
-          } catch (stkErr) {
-            debugPrint('⚠️ Error updating remote stock for movement: $stkErr');
-          }
+        // Update remote stock for ALL movements (Sales and Manual)
+        // to ensure linkage and consistency are preserved.
+        try {
+          final productId = movMap['product_id'];
+          final change = (movMap['change'] as num).toDouble();
+          final remoteProd = await _supabase
+              .from('products')
+              .select('quantity')
+              .eq('id', productId)
+              .single();
+          final currentRemoteQty = (remoteProd['quantity'] as num).toDouble();
+          await _supabase
+              .from('products')
+              .update({'quantity': currentRemoteQty + change})
+              .eq('id', productId);
+        } catch (stkErr) {
+          debugPrint('⚠️ Error updating remote stock for movement: $stkErr');
         }
+
         await db.update(
           'stock_movements',
           {'is_synced': 1},

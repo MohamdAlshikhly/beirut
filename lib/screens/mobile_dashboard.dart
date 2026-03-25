@@ -20,6 +20,7 @@ import '../screens/add_user_screen.dart';
 import '../widgets/add_stock_dialog.dart';
 import '../widgets/skeleton_container.dart';
 import '../services/sync_service.dart';
+import '../widgets/searchable_dropdown.dart';
 
 class MobileDashboard extends ConsumerStatefulWidget {
   const MobileDashboard({super.key});
@@ -503,16 +504,20 @@ class _InventoryTabState extends ConsumerState<_InventoryTab> {
                 'يجب تحويل كافة منتجات هذا القسم إلى قسم آخر قبل الحذف.',
               ),
               const SizedBox(height: 16),
-              DropdownButtonFormField<int>(
-                decoration: const InputDecoration(
-                  labelText: 'اختر القسم البديل',
-                ),
-                items: otherCategories
-                    .map(
-                      (c) => DropdownMenuItem(value: c.id, child: Text(c.name)),
-                    )
-                    .toList(),
-                onChanged: (v) => setDialogState(() => targetCategoryId = v),
+              SearchableDropdown<Category>(
+                items: otherCategories,
+                value: targetCategoryId != null
+                    ? otherCategories.firstWhere(
+                        (c) => c.id == targetCategoryId,
+                      )
+                    : null,
+                label: 'اختر القسم البديل',
+                hint: 'اختر قسم',
+                itemTitle: (c) => c.name,
+                onChanged: (v) =>
+                    setDialogState(() => targetCategoryId = v?.id),
+                searchMatcher: (c, q) =>
+                    c.name.toLowerCase().contains(q.toLowerCase()),
               ),
             ],
           ),

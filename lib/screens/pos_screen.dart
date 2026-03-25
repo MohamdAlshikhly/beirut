@@ -38,10 +38,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   bool _handleRawKey(KeyEvent event) {
     if (_isCheckoutDialogOpen) return false;
 
+    // منع تداخل مفتاح Enter عند إدخال الكمية أو أي حقل نصوص
+    final primaryFocus = FocusManager.instance.primaryFocus;
+    if (primaryFocus != null && primaryFocus.context?.widget is EditableText) {
+      return false;
+    }
+
     if (event is KeyDownEvent) {
       final now = DateTime.now();
-      // أجهزة الباركود سريعة جداً وتكتب الحروف في أجزاء من الثانية
-      // تم زيادة الوقت إلى 500 ملي ثانية لتجنب تقطيع القراءة في أجهزة الباركود اللاسلكية
       if (_lastKeyPress != null &&
           now.difference(_lastKeyPress!).inMilliseconds > 500) {
         _barcodeBuffer = '';
@@ -53,11 +57,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         if (_barcodeBuffer.isNotEmpty && _barcodeBuffer.length > 2) {
           _processScannedBarcode(_barcodeBuffer);
           _barcodeBuffer = '';
-          return true; // Consume event so UI doesn't react to enter if it's a scan
+          return true;
         }
         _barcodeBuffer = '';
 
-        // No barcode, so it's a manual Enter key press signaling cash checkout
         final cartItems = ref.read(cartProvider);
         if (cartItems.isNotEmpty) {
           _showCheckoutConfirmation();
@@ -68,7 +71,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         _barcodeBuffer += event.character!;
       }
     }
-    return false; // Leave normal typing for TextFields
+    return false;
   }
 
   void _processScannedBarcode(String barcode) {
@@ -105,7 +108,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   void _showCheckoutConfirmation() {
     setState(() => _isCheckoutDialogOpen = true);
 
-    showDialog<bool>(
+    showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
@@ -115,52 +118,79 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             if (event is KeyDownEvent) {
               if (event.logicalKey == LogicalKeyboardKey.enter ||
                   event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-                Navigator.pop(ctx, true);
+                Navigator.pop(ctx, 'print');
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.f12) {
+                Navigator.pop(ctx, 'no_print');
                 return KeyEventResult.handled;
               } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-                Navigator.pop(ctx, false);
+                Navigator.pop(ctx, null);
                 return KeyEventResult.handled;
               }
             }
             return KeyEventResult.ignored;
           },
           child: AlertDialog(
-            title: const Text('تأكيد الدفع نقداً'),
-            content: const Text(
-              'هل أنت متأكد من إتمام وطباعة هذه العملية نقداً؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء',
-              style: TextStyle(fontSize: 18),
+            title: const Text('إتمام الفاتورة'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'اختر طريقة الحفظ المناسبة:',
+                  style: TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+                _ShortcutInfo(
+                  label: 'إتمام وطباعة الفاتورة',
+                  shortcut: 'Enter',
+                  icon: PhosphorIconsRegular.printer,
+                ),
+                const SizedBox(height: 12),
+                _ShortcutInfo(
+                  label: 'إتمام فقط (بدون طباعة)',
+                  shortcut: 'F12',
+                  icon: PhosphorIconsRegular.checkCircle,
+                ),
+              ],
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text(
-                  'إلغاء (Esc)',
-                  style: TextStyle(color: AppColors.secondary),
-                ),
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('إلغاء (Esc)'),
               ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(ctx, 'no_print'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.secondary,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(PhosphorIconsRegular.check),
+                label: const Text('إتمام فقط (F12)'),
+              ),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(ctx, 'print'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.secondary,
                 ),
-                child: const Text(
-                  'تأكيد (Enter)',
-                  style: TextStyle(color: AppColors.secondary),
-                ),
+                icon: const Icon(PhosphorIconsRegular.printer),
+                label: const Text('إتمام وطباعة (Enter)'),
               ),
             ],
           ),
         );
       },
-    ).then((confirmed) {
+    ).then((result) {
       if (mounted) setState(() => _isCheckoutDialogOpen = false);
-      if (confirmed == true) {
-        _processPaymentGlobally('cash');
+      if (result != null) {
+        _processPaymentGlobally('cash', shouldPrint: result == 'print');
       }
     });
   }
 
-  void _processPaymentGlobally(String method) async {
+  void _processPaymentGlobally(String method, {bool shouldPrint = true}) async {
     final cartItems = ref.read(cartProvider);
     final total = ref.read(cartProvider.notifier).total;
 
@@ -183,8 +213,10 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       Navigator.of(context).pop();
 
       if (saleId != null) {
-        // Show Print Receipt Dialog only on Computer
-        _showPrintDialog(context, ref, cartItems, total, saleId: saleId);
+        // Show Print Receipt Dialog only if requested
+        if (shouldPrint) {
+          _showPrintDialog(context, ref, cartItems, total, saleId: saleId);
+        }
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -375,6 +407,43 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ShortcutInfo extends StatelessWidget {
+  final String label;
+  final String shortcut;
+  final IconData icon;
+
+  const _ShortcutInfo({
+    required this.label,
+    required this.shortcut,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: AppColors.primary),
+        const SizedBox(width: 12),
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.grey.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            shortcut,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

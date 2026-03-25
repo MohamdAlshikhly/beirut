@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_pos_printer_platform/flutter_pos_printer_platform.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:barcode_widget/barcode_widget.dart';
 import '../services/printing_service.dart';
 import '../utils/app_colors.dart';
 import '../providers/data_providers.dart';
@@ -117,8 +118,8 @@ class PrintUtils {
                                         borderRadius: BorderRadius.circular(4),
                                         boxShadow: [
                                           BoxShadow(
-                                            color: Colors.black.withOpacity(
-                                              0.1,
+                                            color: Colors.black.withValues(
+                                              alpha: 0.1,
                                             ),
                                             blurRadius: 10,
                                             offset: const Offset(0, 4),
@@ -342,7 +343,7 @@ class PrintUtils {
                                                                     4.0,
                                                                   ),
                                                               child: Text(
-                                                                '${(item.product.price * item.quantity).toInt()}',
+                                                                '${((item.priceOverride ?? item.product.price) * item.quantity).toInt()}',
                                                                 textAlign:
                                                                     TextAlign
                                                                         .center,
@@ -441,7 +442,7 @@ class PrintUtils {
                                                             ),
                                                           ),
                                                           Text(
-                                                            'امسح الكود وتواصل معنا',
+                                                            'امسح الكود تابعنا على تيك توك',
                                                             style: TextStyle(
                                                               fontSize: 10,
                                                               color:
@@ -457,13 +458,38 @@ class PrintUtils {
                                                           'https://linktr.ee/dukanBeirut',
                                                       version: QrVersions.auto,
                                                       size: 40.0,
-                                                      foregroundColor:
-                                                          Colors.black,
+                                                      padding: EdgeInsets.zero,
+                                                      eyeStyle:
+                                                          const QrEyeStyle(
+                                                            eyeShape: QrEyeShape
+                                                                .square,
+                                                            color: Colors.black,
+                                                          ),
+                                                      dataModuleStyle:
+                                                          const QrDataModuleStyle(
+                                                            dataModuleShape:
+                                                                QrDataModuleShape
+                                                                    .square,
+                                                            color: Colors.black,
+                                                          ),
                                                     ),
                                                   ],
                                                 ),
                                               ),
                                               const SizedBox(height: 10),
+                                              if (saleId != null)
+                                                Center(
+                                                  child: BarcodeWidget(
+                                                    barcode: Barcode.code128(),
+                                                    data: saleId.toString(),
+                                                    width: double.infinity,
+                                                    height: 30,
+                                                    style: const TextStyle(
+                                                      fontSize: 10,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ),
                                               const Center(
                                                 child: Text(
                                                   'شكراً لزيارتكم.. ننتظركم دائماً',

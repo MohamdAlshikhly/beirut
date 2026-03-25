@@ -97,22 +97,24 @@ class MyApp extends ConsumerWidget {
           child: child!,
         );
       },
-      home: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 800) {
-            if (user == null) {
-              return const LoginScreen();
-            } else if (user.role == 'cashier') {
-              return const CashierMobileDashboardScreen();
+      home: SessionMonitor(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 800) {
+              if (user == null) {
+                return const LoginScreen();
+              } else if (user.role == 'cashier') {
+                return const CashierMobileDashboardScreen();
+              } else {
+                return const MobileDashboard();
+              }
             } else {
-              return const MobileDashboard();
+              return user == null
+                  ? const ComputerLoginScreen()
+                  : const PosScreen();
             }
-          } else {
-            return user == null
-                ? const ComputerLoginScreen()
-                : const PosScreen();
-          }
-        },
+          },
+        ),
       ),
     );
   }
@@ -152,5 +154,49 @@ class MyApp extends ConsumerWidget {
           ? const Color(0xFF0B132B)
           : const Color(0xFFF8FAFC),
     );
+  }
+}
+
+class SessionMonitor extends ConsumerWidget {
+  final Widget child;
+  const SessionMonitor({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sessionId = ref.watch(currentSessionIdProvider);
+    final user = ref.read(authProvider);
+
+    if (sessionId != null && user != null) {
+      final supabase = ref.read(supabaseProvider);
+      return StreamBuilder<List<Map<String, dynamic>>>(
+        stream: supabase
+            .from('sessions')
+            .stream(primaryKey: ['id'])
+            .eq('id', sessionId),
+        builder: (context, snapshot) {
+          if (snapshot.hasData) {
+            bool shouldLogout = false;
+            if (snapshot.data!.isEmpty) {
+              shouldLogout = true;
+            } else {
+              final session = snapshot.data!.first;
+              final isActive =
+                  session['is_active'] == true || session['is_active'] == 1;
+              if (!isActive) shouldLogout = true;
+            }
+
+            if (shouldLogout) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                ref.read(authProvider.notifier).logout();
+                ref.read(currentSessionIdProvider.notifier).set(null);
+              });
+            }
+          }
+          return child;
+        },
+      );
+    }
+
+    return child;
   }
 }

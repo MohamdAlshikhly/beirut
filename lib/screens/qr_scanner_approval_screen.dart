@@ -36,11 +36,11 @@ class _QrScannerApprovalScreenState
     try {
       final client = ref.read(supabaseProvider);
 
-      // Insert directly into the sessions database.
-      // The Computer screen is long-polling this exact session_code and will instantly react.
       await client.from('sessions').insert({
         'user_id': currentUser.id,
         'session_code': sessionId,
+        'started_at': DateTime.now().toIso8601String(),
+        'is_active': true,
       });
 
       if (mounted) {

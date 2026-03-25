@@ -242,18 +242,22 @@ class CartSidebar extends ConsumerWidget {
     final cartItems = ref.read(cartProvider);
     final total = ref.read(cartProvider.notifier).total;
 
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => Focus(
         autofocus: true,
         onKeyEvent: (node, event) {
           if (event is KeyDownEvent) {
             if (event.logicalKey == LogicalKeyboardKey.enter ||
                 event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-              Navigator.pop(ctx, true);
+              Navigator.pop(ctx, 'print');
+              return KeyEventResult.handled;
+            } else if (event.logicalKey == LogicalKeyboardKey.f12) {
+              Navigator.pop(ctx, 'no_print');
               return KeyEventResult.handled;
             } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-              Navigator.pop(ctx, false);
+              Navigator.pop(ctx, null);
               return KeyEventResult.handled;
             }
           }
@@ -261,38 +265,64 @@ class CartSidebar extends ConsumerWidget {
         },
         child: AlertDialog(
           title: Text(
-            method == 'cash' ? 'تأكيد الدفع نقداً' : 'تأكيد الدفع بالبطاقة',
-          ),
-          content: Text(
             method == 'cash'
-                ? 'هل أنت متأكد من إتمام وطباعة هذه العملية نقداً؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء'
-                : 'هل أنت متأكد من إتمام هذه العملية؟\n\n- اضغط (Enter) للتأكيد\n- اضغط (Esc) للإلغاء',
-            style: const TextStyle(fontSize: 18),
+                ? 'إتمام الفاتورة (نقدي)'
+                : 'إتمام الفاتورة (بطاقة)',
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'اختر طريقة الحفظ المناسبة:',
+                style: TextStyle(fontSize: 18),
+              ),
+              const SizedBox(height: 20),
+              _ShortcutInfo(
+                label: 'إتمام وطباعة الفاتورة',
+                shortcut: 'Enter',
+                icon: PhosphorIconsRegular.printer,
+              ),
+              const SizedBox(height: 12),
+              _ShortcutInfo(
+                label: 'إتمام فقط (بدون طباعة)',
+                shortcut: 'F12',
+                icon: PhosphorIconsRegular.checkCircle,
+              ),
+            ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+              onPressed: () => Navigator.pop(ctx, null),
               child: const Text('إلغاء (Esc)'),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(ctx, 'no_print'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.secondary,
+                foregroundColor: Colors.white,
               ),
+              icon: const Icon(PhosphorIconsRegular.check),
+              label: const Text('إتمام فقط (F12)'),
             ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(ctx, 'print'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.secondary,
               ),
-              child: const Text(
-                'تأكيد (Enter)',
-                style: TextStyle(color: AppColors.secondary),
-              ),
+              icon: const Icon(PhosphorIconsRegular.printer),
+              label: const Text('إتمام وطباعة (Enter)'),
             ),
           ],
         ),
       ),
     );
 
-    if (confirmed != true) return;
+    if (result == null) return;
+    final shouldPrint = result == 'print';
+    if (!context.mounted) return;
 
     showDialog(
       context: context,
@@ -317,9 +347,9 @@ class CartSidebar extends ConsumerWidget {
           onPaymentSuccess!();
         }
 
-        // Show Print Receipt Dialog only on Computer
+        // Show Print Receipt Dialog only if requested
         final isMobile = ref.read(isMobileProvider);
-        if (!isMobile) {
+        if (!isMobile && shouldPrint) {
           _showPrintDialog(context, ref, cartItems, total, saleId: saleId);
         }
 
@@ -357,13 +387,73 @@ class CartSidebar extends ConsumerWidget {
   }
 }
 
-class _CartItemTile extends ConsumerWidget {
+class _CartItemTile extends ConsumerStatefulWidget {
   final CartItem item;
 
   const _CartItemTile({required this.item});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CartItemTile> createState() => _CartItemTileState();
+}
+
+class _CartItemTileState extends ConsumerState<_CartItemTile> {
+  late TextEditingController _controller;
+  late FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: _formatQuantity(widget.item.quantity),
+    );
+    _focusNode = FocusNode();
+    _focusNode.addListener(_onFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(_CartItemTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.quantity != widget.item.quantity &&
+        !_focusNode.hasFocus) {
+      _controller.text = _formatQuantity(widget.item.quantity);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChange() {
+    if (_focusNode.hasFocus) {
+      _controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _controller.text.length,
+      );
+    } else {
+      _submitChange();
+    }
+  }
+
+  String _formatQuantity(double qty) {
+    if (qty == qty.toInt()) return qty.toInt().toString();
+    return qty.toString();
+  }
+
+  void _submitChange() {
+    final newQty = double.tryParse(_controller.text) ?? widget.item.quantity;
+    if (newQty != widget.item.quantity) {
+      ref
+          .read(cartProvider.notifier)
+          .updateQuantity(widget.item.product.id, newQty);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final currencyFormatter = NumberFormat('#,##0', 'en_US');
@@ -390,7 +480,7 @@ class _CartItemTile extends ConsumerWidget {
                 ),
                 child: Center(
                   child: Text(
-                    item.product.name.substring(0, 1).toUpperCase(),
+                    widget.item.product.name.substring(0, 1).toUpperCase(),
                     style: const TextStyle(
                       color: AppColors.primary,
                       fontWeight: FontWeight.bold,
@@ -404,13 +494,13 @@ class _CartItemTile extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      item.product.name,
+                      widget.item.product.name,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      '${currencyFormatter.format(item.product.price)} د.ع',
+                      '${currencyFormatter.format(widget.item.priceOverride ?? widget.item.product.price)} د.ع',
                       style: const TextStyle(
                         color: AppColors.primary,
                         fontWeight: FontWeight.bold,
@@ -427,21 +517,34 @@ class _CartItemTile extends ConsumerWidget {
                     color: Colors.grey,
                     onPressed: () => ref
                         .read(cartProvider.notifier)
-                        .updateQuantity(item.product.id, item.quantity - 1),
-                  ),
-                  InkWell(
-                    onTap: () => _showQuantityDialog(context, ref, item),
-                    borderRadius: BorderRadius.circular(4),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text(
-                        '${item.quantity}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 18,
-                          color: AppColors.primary,
+                        .updateQuantity(
+                          widget.item.product.id,
+                          widget.item.quantity - 1,
                         ),
+                  ),
+                  SizedBox(
+                    width: 50,
+                    child: TextField(
+                      controller: _controller,
+                      focusNode: _focusNode,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
                       ),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                        color: AppColors.primary,
+                      ),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 8),
+                        border: InputBorder.none,
+                      ),
+                      onSubmitted: (_) {
+                        _submitChange();
+                        _focusNode.unfocus();
+                      },
                     ),
                   ),
                   IconButton(
@@ -450,7 +553,10 @@ class _CartItemTile extends ConsumerWidget {
                     color: AppColors.primary,
                     onPressed: () => ref
                         .read(cartProvider.notifier)
-                        .updateQuantity(item.product.id, item.quantity + 1),
+                        .updateQuantity(
+                          widget.item.product.id,
+                          widget.item.quantity + 1,
+                        ),
                   ),
                   IconButton(
                     icon: const Icon(
@@ -460,7 +566,7 @@ class _CartItemTile extends ConsumerWidget {
                     iconSize: 20,
                     onPressed: () => ref
                         .read(cartProvider.notifier)
-                        .removeProduct(item.product.id),
+                        .removeProduct(widget.item.product.id),
                     tooltip: 'إزالة من السلة',
                   ),
                 ],
@@ -470,6 +576,7 @@ class _CartItemTile extends ConsumerWidget {
           const SizedBox(height: 8),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
             child: Row(
               children: [1, 0.75, 0.5, 0.25, 0.125, 0.1, 0.05, 0.025].map((
                 preset,
@@ -479,14 +586,17 @@ class _CartItemTile extends ConsumerWidget {
                   child: InkWell(
                     onTap: () => ref
                         .read(cartProvider.notifier)
-                        .updateQuantity(item.product.id, preset.toDouble()),
+                        .updateQuantity(
+                          widget.item.product.id,
+                          preset.toDouble(),
+                        ),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: item.quantity == preset
+                        color: widget.item.quantity == preset
                             ? AppColors.primary
                             : AppColors.primary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8),
@@ -496,7 +606,7 @@ class _CartItemTile extends ConsumerWidget {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
-                          color: item.quantity == preset
+                          color: widget.item.quantity == preset
                               ? AppColors.secondary
                               : AppColors.primary,
                         ),
@@ -505,70 +615,6 @@ class _CartItemTile extends ConsumerWidget {
                   ),
                 );
               }).toList(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showQuantityDialog(BuildContext context, WidgetRef ref, CartItem item) {
-    final controller = TextEditingController(text: '${item.quantity}');
-    controller.selection = TextSelection(
-      baseOffset: 0,
-      extentOffset: controller.text.length,
-    );
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تعديل الكمية'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(item.product.name, style: const TextStyle(fontSize: 14)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              decoration: InputDecoration(
-                suffixText: 'وحدة',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              onSubmitted: (val) {
-                final newQty = double.tryParse(val) ?? item.quantity;
-                ref
-                    .read(cartProvider.notifier)
-                    .updateQuantity(item.product.id, newQty);
-                Navigator.pop(ctx);
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final newQty = double.tryParse(controller.text) ?? item.quantity;
-              ref
-                  .read(cartProvider.notifier)
-                  .updateQuantity(item.product.id, newQty);
-              Navigator.pop(ctx);
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-            child: const Text(
-              'تعديل',
-              style: TextStyle(color: AppColors.secondary),
             ),
           ),
         ],
@@ -609,6 +655,43 @@ class _PaymentButton extends StatelessWidget {
         style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
       ),
       onPressed: onPressed,
+    );
+  }
+}
+
+class _ShortcutInfo extends StatelessWidget {
+  final String label;
+  final String shortcut;
+  final IconData icon;
+
+  const _ShortcutInfo({
+    required this.label,
+    required this.shortcut,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: AppColors.primary),
+        const SizedBox(width: 12),
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.grey.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            shortcut,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
