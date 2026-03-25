@@ -100,7 +100,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       try {
         final onlineRes = await supabase
             .from('products')
-            .insert({...productData, 'is_synced': true})
+            .insert(productData)
             .select()
             .single();
 

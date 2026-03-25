@@ -467,7 +467,6 @@ class CheckoutRepository {
             'product_id': pid,
             'change': val,
             'reason': reason,
-            'is_synced': true,
           });
         } catch (e) {
           debugPrint('Online stock update failed for $pid: $e');
@@ -545,7 +544,6 @@ class CheckoutRepository {
             'total_price': total,
             'payment_type': paymentType,
             if (currentUser != null) 'user_id': currentUser.id,
-            'is_synced': true,
           })
           .select()
           .single();
@@ -581,7 +579,6 @@ class CheckoutRepository {
         final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
         await supabase.from('balance').insert({
           'currentBalance': currentBal + total.toInt(),
-          'is_synced': true,
         });
       }
 
@@ -695,18 +692,13 @@ class CheckoutRepository {
         final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
         await supabase.from('balance').insert({
           'currentBalance': currentBal - oldTotal.toInt(),
-          'is_synced': true,
         });
       }
 
       // 3. Update Sale (Online)
       await supabase
           .from('sales')
-          .update({
-            'total_price': total,
-            'payment_type': paymentType,
-            'is_synced': true,
-          })
+          .update({'total_price': total, 'payment_type': paymentType})
           .eq('id', saleId);
 
       if (paymentType == 'cash') {
@@ -719,7 +711,6 @@ class CheckoutRepository {
         final lastBal = lastBalRes?['currentBalance'] as int? ?? 0;
         await supabase.from('balance').insert({
           'currentBalance': lastBal + total.toInt(),
-          'is_synced': true,
         });
       }
 
@@ -918,7 +909,6 @@ class CheckoutRepository {
         final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
         await supabase.from('balance').insert({
           'currentBalance': currentBal - total.toInt(),
-          'is_synced': true,
         });
       }
 
