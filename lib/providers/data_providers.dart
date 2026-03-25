@@ -117,7 +117,7 @@ final balanceProvider = StreamProvider<int>((ref) {
         final response = await supabase
             .from('balance')
             .select('currentBalance')
-            .order('created_at', ascending: false)
+            .order('id', ascending: false)
             .limit(1)
             .maybeSingle()
             .timeout(const Duration(seconds: 5));
@@ -129,11 +129,7 @@ final balanceProvider = StreamProvider<int>((ref) {
     } catch (e) {
       debugPrint('Balance fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
-      final response = await db.query(
-        'balance',
-        orderBy: 'created_at DESC',
-        limit: 1,
-      );
+      final response = await db.query('balance', orderBy: 'id DESC', limit: 1);
       yield response.isEmpty
           ? 0
           : response.first['currentBalance'] as int? ?? 0;
@@ -507,7 +503,7 @@ class CheckoutRepository {
   }
 
   Future<void> _updateDrawerBalance(Database db, double amountChange) async {
-    final res = await db.query('balance', orderBy: 'created_at DESC', limit: 1);
+    final res = await db.query('balance', orderBy: 'id DESC', limit: 1);
     int currentBal = 0;
     int? id;
     if (res.isNotEmpty) {
@@ -579,7 +575,7 @@ class CheckoutRepository {
         final remoteBalRes = await supabase
             .from('balance')
             .select()
-            .order('created_at', ascending: false)
+            .order('id', ascending: false)
             .limit(1)
             .maybeSingle();
         final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
@@ -693,7 +689,7 @@ class CheckoutRepository {
         final remoteBalRes = await supabase
             .from('balance')
             .select()
-            .order('created_at', ascending: false)
+            .order('id', ascending: false)
             .limit(1)
             .maybeSingle();
         final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
@@ -717,7 +713,7 @@ class CheckoutRepository {
         final lastBalRes = await supabase
             .from('balance')
             .select()
-            .order('created_at', ascending: false)
+            .order('id', ascending: false)
             .limit(1)
             .maybeSingle();
         final lastBal = lastBalRes?['currentBalance'] as int? ?? 0;
@@ -916,7 +912,7 @@ class CheckoutRepository {
         final remoteBalRes = await supabase
             .from('balance')
             .select()
-            .order('created_at', ascending: false)
+            .order('id', ascending: false)
             .limit(1)
             .maybeSingle();
         final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;

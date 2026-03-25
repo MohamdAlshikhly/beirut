@@ -186,7 +186,7 @@ class _WithdrawCashDialogState extends ConsumerState<WithdrawCashDialog> {
       final res = await client
           .from('balance')
           .select()
-          .order('created_at', ascending: false)
+          .order('id', ascending: false)
           .limit(1);
       int currentBal = res.isNotEmpty
           ? res.first['currentBalance'] as int? ?? 0

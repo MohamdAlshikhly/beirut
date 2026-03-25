@@ -98,7 +98,7 @@ class SyncService {
       final remoteBalRes = await _supabase
           .from('balance')
           .select()
-          .order('created_at', ascending: false)
+          .order('id', ascending: false)
           .limit(1);
 
       if (remoteBalRes.isNotEmpty) {
@@ -200,7 +200,7 @@ class SyncService {
             final remoteBalRes = await _supabase
                 .from('balance')
                 .select()
-                .order('created_at', ascending: false)
+                .order('id', ascending: false)
                 .limit(1)
                 .maybeSingle();
             final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
@@ -358,7 +358,7 @@ class SyncService {
         final remoteBalRes = await _supabase
             .from('balance')
             .select()
-            .order('created_at', ascending: false)
+            .order('id', ascending: false)
             .limit(1);
 
         if (remoteBalRes.isNotEmpty) {

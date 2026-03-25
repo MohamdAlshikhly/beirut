@@ -42,14 +42,16 @@ class _RetireMoneyScreenState extends ConsumerState<RetireMoneyScreen> {
       final res = await client
           .from('balance')
           .select()
-          .order('created_at', ascending: false)
+          .order('id', ascending: false)
           .limit(1)
           .maybeSingle();
 
       double currentBal = (res?['currentBalance'] as num?)?.toDouble() ?? 0.0;
       currentBal -= amount;
 
-      await client.from('balance').insert({'currentBalance': currentBal});
+      await client.from('balance').insert({
+        'currentBalance': currentBal.toInt(),
+      });
 
       ref.invalidate(balanceProvider);
       if (mounted) {
