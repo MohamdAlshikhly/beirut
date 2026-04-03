@@ -196,6 +196,21 @@ class SyncService {
         }
       }
 
+      // Sync Cards
+      final remoteCards = await _supabase.from('cards').select();
+      for (var card in remoteCards) {
+        await db.execute('PRAGMA foreign_keys = OFF');
+        await db.insert('cards', {
+          'id': card['id'],
+          'name': card['name'],
+          'product_id': card['productId'],
+          'price': (card['price'] as num?)?.toInt() ?? 0,
+          'spended_balance': (card['spended_balance'] as num?)?.toInt() ?? 0,
+          'created_at': card['created_at'],
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await db.execute('PRAGMA foreign_keys = ON');
+      }
+
       debugPrint('✅ Sync Down Completed');
       ref.read(dbUpdateTriggerProvider.notifier).trigger();
     } on SocketException {

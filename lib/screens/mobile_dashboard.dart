@@ -18,6 +18,7 @@ import '../screens/sessions_monitoring_screen.dart';
 import '../screens/retire_money_screen.dart';
 import '../screens/add_user_screen.dart';
 import '../widgets/add_stock_dialog.dart';
+import '../screens/cards_management_screen.dart';
 import '../widgets/skeleton_container.dart';
 import '../services/sync_service.dart';
 import '../widgets/searchable_dropdown.dart';
@@ -711,6 +712,29 @@ class _InventoryTabState extends ConsumerState<_InventoryTab> {
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             onPressed: _startAddStockFlow,
+          ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF7C3AED),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            icon: const Icon(Icons.credit_card),
+            label: const Text(
+              'إدارة كروت التعبئة',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const CardsManagementScreen(),
+              ),
+            ),
           ),
           const SizedBox(height: 20),
           TextField(

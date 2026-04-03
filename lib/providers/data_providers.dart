@@ -193,6 +193,7 @@ Future<void> _mirrorProductsToLocal(List<Map<String, dynamic>> data) async {
             'base_unit_conversion': prod['base_unit_conversion'] != null
                 ? (prod['base_unit_conversion'] as num).toDouble()
                 : 1.0,
+            'is_card': (prod['is_card'] as num?)?.toInt() ?? 0,
             'is_synced': 1,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
@@ -505,18 +506,26 @@ class CartItem {
   final Product product;
   final double quantity;
   final double? priceOverride;
+  final int? cardId; // set when product.isCard, tracks which card was selected
 
-  CartItem({required this.product, required this.quantity, this.priceOverride});
+  CartItem({
+    required this.product,
+    required this.quantity,
+    this.priceOverride,
+    this.cardId,
+  });
 
   CartItem copyWith({
     Product? product,
     double? quantity,
     double? priceOverride,
+    int? cardId,
   }) {
     return CartItem(
       product: product ?? this.product,
       quantity: quantity ?? this.quantity,
       priceOverride: priceOverride ?? this.priceOverride,
+      cardId: cardId ?? this.cardId,
     );
   }
 }
@@ -525,7 +534,20 @@ class CartNotifier extends Notifier<List<CartItem>> {
   @override
   List<CartItem> build() => [];
 
-  void addProduct(Product product, {double? priceOverride}) {
+  void addProduct(Product product, {double? priceOverride, int? cardId}) {
+    // Card items are always separate entries (each card is a distinct item)
+    if (cardId != null) {
+      state = [
+        ...state,
+        CartItem(
+          product: product,
+          quantity: 1,
+          priceOverride: priceOverride,
+          cardId: cardId,
+        ),
+      ];
+      return;
+    }
     final existingIndex = state.indexWhere(
       (item) =>
           item.product.id == product.id && item.priceOverride == priceOverride,
@@ -778,7 +800,18 @@ class CheckoutRepository {
         ref.invalidate(todaySalesProvider);
         ref.invalidate(todaySalesCountProvider);
 
-        // 5. Return local ID immediately — caller triggers syncUp in background
+        // 5. Update card spended_balance in background if cart has card items
+        final cardItems = cartItems.where((i) => i.cardId != null).toList();
+        if (cardItems.isNotEmpty && ref.read(isOnlineProvider)) {
+          Future.delayed(
+            Duration.zero,
+            () => ref
+                .read(cardsRepositoryProvider)
+                .incrementSpendedBalance(cardItems),
+          );
+        }
+
+        // 6. Return local ID immediately — caller triggers syncUp in background
         return localSaleId;
       } catch (e) {
         debugPrint('Desktop instant checkout failed: $e');
@@ -1260,6 +1293,125 @@ class CheckoutRepository {
     }
   }
 }
+// ── Cards (Recharge Cards) ─────────────────────────────────────────────────
+
+final cardsProvider = FutureProvider.family<List<CardItem>, int>((
+  ref,
+  productId,
+) async {
+  final supabase = ref.read(supabaseProvider);
+  final isOnline = ref.read(isOnlineProvider);
+  if (isOnline) {
+    try {
+      final data = await supabase
+          .from('cards')
+          .select()
+          .eq('productId', productId)
+          .order('price');
+      // Mirror to local
+      _mirrorCardsToLocal(data);
+      return data.map((j) => CardItem.fromJson(j)).toList();
+    } catch (_) {}
+  }
+  // Fallback: local SQLite
+  final db = await LocalDatabase.instance.database;
+  final rows = await db.query(
+    'cards',
+    where: 'product_id = ?',
+    whereArgs: [productId],
+    orderBy: 'price ASC',
+  );
+  return rows.map((j) => CardItem.fromJson({...j, 'productId': j['product_id']})).toList();
+});
+
+Future<void> _mirrorCardsToLocal(List<Map<String, dynamic>> data) async {
+  try {
+    final db = await LocalDatabase.instance.database;
+    for (var card in data) {
+      await db.insert('cards', {
+        'id': card['id'],
+        'name': card['name'],
+        'product_id': card['productId'],
+        'price': (card['price'] as num?)?.toInt() ?? 0,
+        'spended_balance': (card['spended_balance'] as num?)?.toInt() ?? 0,
+        'created_at': card['created_at'],
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  } catch (e) {
+    debugPrint('Mirror cards to local failed: $e');
+  }
+}
+
+final cardsRepositoryProvider = Provider((ref) => CardsRepository(ref));
+
+class CardsRepository {
+  final Ref ref;
+  CardsRepository(this.ref);
+
+  Future<void> addCard({
+    required String name,
+    required int productId,
+    required int price,
+  }) async {
+    final supabase = ref.read(supabaseProvider);
+    final result = await supabase.from('cards').insert({
+      'name': name,
+      'productId': productId,
+      'price': price,
+      'spended_balance': 0,
+    }).select().single();
+    // Mirror locally
+    final db = await LocalDatabase.instance.database;
+    await db.insert('cards', {
+      'id': result['id'],
+      'name': name,
+      'product_id': productId,
+      'price': price,
+      'spended_balance': 0,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    ref.invalidate(cardsProvider(productId));
+  }
+
+  Future<void> resetCardBalance(int cardId, int productId) async {
+    final supabase = ref.read(supabaseProvider);
+    await supabase.from('cards').update({'spended_balance': 0}).eq('id', cardId);
+    final db = await LocalDatabase.instance.database;
+    await db.update('cards', {'spended_balance': 0},
+        where: 'id = ?', whereArgs: [cardId]);
+    ref.invalidate(cardsProvider(productId));
+  }
+
+  /// Called after a sale — increments spended_balance for each card item
+  Future<void> incrementSpendedBalance(List<CartItem> items) async {
+    final supabase = ref.read(supabaseProvider);
+    for (final item in items) {
+      if (item.cardId == null) continue;
+      final price = (item.priceOverride ?? item.product.price).toInt();
+      try {
+        // Read current then increment (Supabase doesn't support += directly)
+        final current = await supabase
+            .from('cards')
+            .select('spended_balance')
+            .eq('id', item.cardId!)
+            .single();
+        final newBal =
+            ((current['spended_balance'] as num?)?.toInt() ?? 0) + price;
+        await supabase
+            .from('cards')
+            .update({'spended_balance': newBal})
+            .eq('id', item.cardId!);
+        // Update local
+        final db = await LocalDatabase.instance.database;
+        await db.update('cards', {'spended_balance': newBal},
+            where: 'id = ?', whereArgs: [item.cardId]);
+        ref.invalidate(cardsProvider(item.product.id));
+      } catch (e) {
+        debugPrint('Failed to update card spended_balance: $e');
+      }
+    }
+  }
+}
+
 final cashDrawerProvider = Provider((ref) => CashDrawerRepository(ref));
 
 class CashDrawerRepository {

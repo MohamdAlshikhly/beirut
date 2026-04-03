@@ -27,7 +27,7 @@ class LocalDatabase {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -68,11 +68,27 @@ class LocalDatabase {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         reason TEXT,
         amount REAL DEFAULT 0,
-        type TEXT NOT NULL, -- 'open', 'add', 'withdraw'
+        type TEXT NOT NULL,
         user_id INTEGER,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         is_synced INTEGER DEFAULT 0,
         FOREIGN KEY (user_id) REFERENCES users (id)
+      )
+      ''');
+    }
+    if (oldVersion < 8) {
+      await db.execute(
+        'ALTER TABLE products ADD COLUMN is_card INTEGER DEFAULT 0',
+      );
+      await db.execute('''
+      CREATE TABLE IF NOT EXISTS cards (
+        id INTEGER PRIMARY KEY,
+        name TEXT,
+        product_id INTEGER,
+        price INTEGER DEFAULT 0,
+        spended_balance INTEGER DEFAULT 0,
+        created_at TEXT,
+        FOREIGN KEY (product_id) REFERENCES products (id)
       )
       ''');
     }
@@ -118,6 +134,7 @@ class LocalDatabase {
       image_url TEXT,
       base_unit_id INTEGER,
       base_unit_conversion REAL DEFAULT 1.0,
+      is_card INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       is_synced INTEGER DEFAULT 0,
       FOREIGN KEY (category_id) REFERENCES categories (id),
@@ -199,6 +216,19 @@ class LocalDatabase {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       is_synced INTEGER DEFAULT 0,
       FOREIGN KEY (user_id) REFERENCES users (id)
+    )
+    ''');
+
+    // 10. cards (recharge cards)
+    await db.execute('''
+    CREATE TABLE cards (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      product_id INTEGER,
+      price INTEGER DEFAULT 0,
+      spended_balance INTEGER DEFAULT 0,
+      created_at TEXT,
+      FOREIGN KEY (product_id) REFERENCES products (id)
     )
     ''');
   }

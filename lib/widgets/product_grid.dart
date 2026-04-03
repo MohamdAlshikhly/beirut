@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../utils/glass_container.dart';
 import '../utils/app_colors.dart';
 import '../widgets/skeleton_container.dart';
+import '../widgets/card_selection_dialog.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 class SearchQueryNotifier extends Notifier<String> {
@@ -351,20 +352,8 @@ class _ProductCard extends ConsumerWidget {
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: () async {
-          final isRecharge =
-              product.name.contains('اسياسيل') ||
-              product.name.contains('زين') ||
-              product.name.contains('كورك') ||
-              product.name.contains('رصيد') ||
-              product.name.contains('كارت');
-
-          if (isRecharge) {
-            final amount = await _showAmountDialog(context);
-            if (amount != null && amount > 0) {
-              ref
-                  .read(cartProvider.notifier)
-                  .addProduct(product, priceOverride: amount);
-            }
+          if (product.isCard) {
+            await showCardSelectionDialog(context, ref, product);
           } else {
             ref.read(cartProvider.notifier).addProduct(product);
           }
@@ -494,42 +483,4 @@ class _ProductCard extends ConsumerWidget {
     );
   }
 
-  Future<double?> _showAmountDialog(BuildContext context) async {
-    final controller = TextEditingController();
-    return showDialog<double>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('ادخل مبلغ الكرت لـ ${product.name}'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          decoration: const InputDecoration(
-            suffixText: 'د.ع',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (val) {
-            Navigator.pop(ctx, double.tryParse(val));
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () =>
-                Navigator.pop(ctx, double.tryParse(controller.text)),
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-            child: const Text(
-              'إضافة',
-              style: TextStyle(color: AppColors.secondary),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

@@ -19,6 +19,7 @@ class Product {
   final String? imageUrl;
   final int? baseUnitId;
   final double baseUnitConversion;
+  final bool isCard;
 
   Product({
     required this.id,
@@ -31,6 +32,7 @@ class Product {
     this.imageUrl,
     this.baseUnitId,
     this.baseUnitConversion = 1.0,
+    this.isCard = false,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) => Product(
@@ -47,6 +49,7 @@ class Product {
     baseUnitId: json['base_unit_id'],
     baseUnitConversion:
         (json['base_unit_conversion'] as num?)?.toDouble() ?? 1.0,
+    isCard: (json['is_card'] as num?)?.toInt() == 1,
   );
 
   Product copyWith({
@@ -60,6 +63,7 @@ class Product {
     String? imageUrl,
     int? baseUnitId,
     double? baseUnitConversion,
+    bool? isCard,
   }) {
     return Product(
       id: id ?? this.id,
@@ -72,8 +76,33 @@ class Product {
       imageUrl: imageUrl ?? this.imageUrl,
       baseUnitId: baseUnitId ?? this.baseUnitId,
       baseUnitConversion: baseUnitConversion ?? this.baseUnitConversion,
+      isCard: isCard ?? this.isCard,
     );
   }
+}
+
+class CardItem {
+  final int id;
+  final String name;
+  final int productId;
+  final int price;
+  final int spendedBalance;
+
+  CardItem({
+    required this.id,
+    required this.name,
+    required this.productId,
+    required this.price,
+    required this.spendedBalance,
+  });
+
+  factory CardItem.fromJson(Map<String, dynamic> json) => CardItem(
+    id: json['id'],
+    name: json['name'] ?? '',
+    productId: json['productId'] ?? json['product_id'],
+    price: (json['price'] as num?)?.toInt() ?? 0,
+    spendedBalance: (json['spended_balance'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class AppUser {

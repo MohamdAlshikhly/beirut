@@ -27,6 +27,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   int? _selectedBaseUnitId;
   final _conversionController = TextEditingController(text: '1.0');
   bool _isLoading = false;
+  bool _isCard = false;
   XFile? _pickedImage;
   final _picker = ImagePicker();
 
@@ -95,6 +96,7 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         'base_unit_id': _selectedBaseUnitId,
         'base_unit_conversion':
             double.tryParse(_conversionController.text) ?? 1.0,
+        'is_card': _isCard ? 1 : 0,
       };
 
       // 1. Try Online First
@@ -273,6 +275,19 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                       labelText: 'اسم المنتج المُراد إضافته',
                       filled: true,
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  SwitchListTile(
+                    value: _isCard,
+                    onChanged: (v) => setState(() => _isCard = v),
+                    title: const Text('كرت تعبئة'),
+                    subtitle: const Text(
+                      'يتيح إضافة كروت بقيم مختلفة من إدارة الكروت',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    secondary: const Icon(Icons.credit_card, color: AppColors.primary),
+                    activeThumbColor: AppColors.primary,
+                    contentPadding: EdgeInsets.zero,
                   ),
                   const SizedBox(height: 16),
                   Row(
