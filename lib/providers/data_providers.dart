@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' hide Category;
+import 'package:flutter/foundation.dart' hide Category; // also provides kIsWeb
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -11,7 +11,6 @@ import '../models/models.dart';
 import '../services/local_database.dart';
 import '../services/printing_service.dart';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show Platform;
 
 enum SidebarView { cart, history, details }
@@ -720,7 +719,77 @@ class CheckoutRepository {
     final currentUser = ref.read(authProvider);
     final db = await LocalDatabase.instance.database;
 
-    // ONLINE-FIRST TRANSACTION
+    // ── DESKTOP: Instant local save, Supabase sync happens in background ──
+    final isDesktop =
+        !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+    if (isDesktop) {
+      try {
+        // 1. Save sale to SQLite immediately (is_synced=0 → syncUp will push it)
+        await db.execute('PRAGMA foreign_keys = OFF');
+        final localSaleId = await db.insert('sales', {
+          'total_price': total,
+          'payment_type': paymentType,
+          if (currentUser != null) 'user_id': currentUser.id,
+          'is_synced': 0,
+        });
+        for (final item in cartItems) {
+          final itemPrice = item.priceOverride ?? item.product.price;
+          await db.insert('sale_items', {
+            'sale_id': localSaleId,
+            'product_id': item.product.id,
+            'quantity': item.quantity.toInt(),
+            'price': itemPrice,
+          });
+        }
+        await db.execute('PRAGMA foreign_keys = ON');
+
+        // 2. Update local stock (creates stock_movements with is_synced=0)
+        for (final item in cartItems) {
+          await updateStockWithLinkage(
+            productId: item.product.id,
+            change: -item.quantity,
+            reason: 'بيع في فاتورة #$localSaleId',
+            isOnline: false,
+          );
+        }
+
+        // 3. Open cash drawer physically + log locally as unsynced
+        if (paymentType == 'cash') {
+          try {
+            await ref.read(printingServiceProvider).openCashDrawer();
+          } catch (e) {
+            debugPrint('Cash drawer open failed: $e');
+          }
+          try {
+            await db.insert('cash_drawer_logs', {
+              'type': 'open',
+              'reason': 'بيع في فاتورة #$localSaleId',
+              'amount': total,
+              'user_id': currentUser?.id,
+              'created_at': DateTime.now().toUtc().toIso8601String(),
+              'is_synced': 0,
+            });
+          } catch (_) {}
+        }
+
+        // 4. Clear cart & refresh UI immediately
+        ref.read(cartProvider.notifier).clear();
+        ref.read(dbUpdateTriggerProvider.notifier).trigger();
+        ref.invalidate(todaySalesProvider);
+        ref.invalidate(todaySalesCountProvider);
+
+        // 5. Return local ID immediately — caller triggers syncUp in background
+        return localSaleId;
+      } catch (e) {
+        debugPrint('Desktop instant checkout failed: $e');
+        try {
+          await db.execute('PRAGMA foreign_keys = ON');
+        } catch (_) {}
+        return null;
+      }
+    }
+
+    // ── MOBILE / WEB: Original online-first transaction ──
     try {
       // 1. Insert Sale
       final saleResponse = await supabase

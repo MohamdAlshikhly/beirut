@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:io' show Platform;
 import '../providers/theme_provider.dart';
 import '../providers/data_providers.dart';
 import '../utils/glass_container.dart';
@@ -194,12 +196,17 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   void _processPaymentGlobally(String method, {bool shouldPrint = true}) async {
     final cartItems = ref.read(cartProvider);
     final total = ref.read(cartProvider.notifier).total;
+    final isDesktop =
+        !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    // Desktop: no loading dialog — checkout returns instantly from local DB
+    if (!isDesktop) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+    }
 
     final editingSaleId = ref.read(editingSaleIdProvider);
     int? saleId;
@@ -211,7 +218,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     }
 
     if (mounted) {
-      Navigator.of(context).pop();
+      if (!isDesktop) Navigator.of(context).pop();
 
       if (saleId != null) {
         // Show Print Receipt Dialog only if requested
@@ -225,6 +232,14 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             backgroundColor: Colors.green,
           ),
         );
+
+        // Desktop: push to Supabase in background after instant local save
+        if (isDesktop) {
+          Future.delayed(
+            Duration.zero,
+            () => ref.read(syncServiceProvider).syncUp(),
+          );
+        }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
