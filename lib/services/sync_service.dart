@@ -5,14 +5,57 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'local_database.dart';
 import '../providers/data_providers.dart';
+import 'printing_service.dart';
 
 final syncServiceProvider = Provider((ref) => SyncService(ref));
 
 class SyncService {
   final Ref ref;
-  SyncService(this.ref);
+  SyncService(this.ref) {
+    _initRealtimeListener();
+  }
 
   final _supabase = Supabase.instance.client;
+
+  void _initRealtimeListener() {
+    // Only listen on Desktop (Mac/Windows/Linux) as they are the primary POS terminals
+    if (kIsWeb) return;
+    if (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux) return;
+
+    debugPrint('Initializing Realtime Listeners...');
+
+    // Cash drawer: remote open command from mobile
+    _supabase
+        .channel('cash_drawer_commands')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'cash_drawer_logs',
+          callback: (payload) {
+            final newRecord = payload.newRecord;
+            if (newRecord['type'] == 'open' &&
+                newRecord['reason'] == 'remote_open') {
+              debugPrint('Received remote open command!');
+              ref.read(printingServiceProvider).openCashDrawer();
+            }
+          },
+        )
+        .subscribe();
+
+    // Sales: trigger refresh of today's sales stats on any change
+    _supabase
+        .channel('sales_realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'sales',
+          callback: (_) {
+            debugPrint('Sales change detected, refreshing stats...');
+            ref.read(dbUpdateTriggerProvider.notifier).trigger();
+          },
+        )
+        .subscribe();
+  }
 
   Future<void> syncDown() async {
     try {

@@ -104,6 +104,7 @@ class _SidebarHistoryState extends ConsumerState<SidebarHistory> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(dbUpdateTriggerProvider, (_, _) => _fetchSales());
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Column(

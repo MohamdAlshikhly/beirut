@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -19,11 +20,27 @@ class _SessionsMonitoringScreenState
     extends ConsumerState<SessionsMonitoringScreen> {
   bool _isLoading = true;
   List<SessionLog> _sessions = [];
+  StreamSubscription? _realtimeSubscription;
 
   @override
   void initState() {
     super.initState();
     _fetchSessions();
+    _initRealtimeListener();
+  }
+
+  void _initRealtimeListener() {
+    _realtimeSubscription = ref
+        .read(supabaseProvider)
+        .from('sessions')
+        .stream(primaryKey: ['id'])
+        .listen((_) => _fetchSessions());
+  }
+
+  @override
+  void dispose() {
+    _realtimeSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchSessions() async {

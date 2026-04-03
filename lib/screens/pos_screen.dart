@@ -10,6 +10,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../utils/app_colors.dart';
 import '../services/sync_service.dart';
 import '../utils/print_utils.dart';
+import '../widgets/cash_drawer_dialog.dart';
 
 class PosScreen extends ConsumerStatefulWidget {
   const PosScreen({super.key});
@@ -346,6 +347,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
                                 content: Text('جاري بدء المزامنة... 🔄'),
                                 duration: Duration(seconds: 1),
                               ),
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(
+                            PhosphorIconsRegular.archive,
+                            color: AppColors.primary,
+                          ),
+                          tooltip: 'فتح درج النقود',
+                          onPressed: () {
+                            showDialog(
+                              context: context,
+                              builder: (_) => const CashDrawerDialog(),
                             );
                           },
                         ),

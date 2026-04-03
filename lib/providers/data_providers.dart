@@ -9,6 +9,7 @@ import 'dart:convert';
 import '../main.dart'; // To access global prefs
 import '../models/models.dart';
 import '../services/local_database.dart';
+import '../services/printing_service.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show Platform;
@@ -152,10 +153,70 @@ final dbUpdateTriggerProvider = NotifierProvider<DbUpdateTrigger, int>(() {
   return DbUpdateTrigger();
 });
 
+Future<void> _mirrorCategoriesToLocal(List<Map<String, dynamic>> data) async {
+  try {
+    final db = await LocalDatabase.instance.database;
+    for (var cat in data) {
+      await db.insert(
+        'categories',
+        {'id': cat['id'], 'name': cat['name'], 'is_synced': 1},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+  } catch (e) {
+    debugPrint('Mirror categories to local failed: $e');
+  }
+}
+
+Future<void> _mirrorProductsToLocal(List<Map<String, dynamic>> data) async {
+  try {
+    final db = await LocalDatabase.instance.database;
+    for (var prod in data) {
+      await db.insert(
+        'products',
+        {
+          'id': prod['id'],
+          'name': prod['name'],
+          'barcode': prod['barcode'],
+          'price': (prod['price'] as num).toDouble(),
+          'cost_price': prod['cost_price'] != null
+              ? (prod['cost_price'] as num).toDouble()
+              : null,
+          'quantity': prod['quantity'] != null
+              ? (prod['quantity'] as num).toDouble()
+              : 0.0,
+          'category_id': prod['category_id'],
+          'image_url': prod['image_url'],
+          'base_unit_id': prod['base_unit_id'],
+          'base_unit_conversion': prod['base_unit_conversion'] != null
+              ? (prod['base_unit_conversion'] as num).toDouble()
+              : 1.0,
+          'is_synced': 1,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+  } catch (e) {
+    debugPrint('Mirror products to local failed: $e');
+  }
+}
+
 final balanceProvider = StreamProvider<int>((ref) {
   final supabase = ref.read(supabaseProvider);
   final isOnline = ref.watch(isOnlineProvider);
-  // Manual refresh trigger
+  final isDesktop = !kIsWeb &&
+      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+
+  if (isOnline && isDesktop) {
+    return supabase
+        .from('balance')
+        .stream(primaryKey: ['id'])
+        .order('id', ascending: false)
+        .limit(1)
+        .map((data) =>
+            data.isEmpty ? 0 : (data.first['currentBalance'] as int? ?? 0));
+  }
+
   ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
@@ -187,38 +248,31 @@ final balanceProvider = StreamProvider<int>((ref) {
 final categoriesProvider = StreamProvider<List<Category>>((ref) {
   final supabase = ref.read(supabaseProvider);
   final isOnline = ref.watch(isOnlineProvider);
-  // Manual refresh trigger
+  final isDesktop = !kIsWeb &&
+      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+
+  if (isOnline && isDesktop) {
+    return supabase
+        .from('categories')
+        .stream(primaryKey: ['id'])
+        .map((data) {
+          _mirrorCategoriesToLocal(data);
+          return data.map((json) => Category.fromJson(json)).toList();
+        });
+  }
+
   ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
       if (isOnline) {
-        // Fetch once on refresh/trigger
         final response = await supabase
             .from('categories')
             .select()
             .timeout(const Duration(seconds: 5));
-        final categories = response
-            .map((json) => Category.fromJson(json))
-            .toList();
-
-        // Mirror locally to avoid foreign key errors when adding products
-        final db = await LocalDatabase.instance.database;
-        int insertedCount = 0;
-        for (var cat in response) {
-          try {
-            await db.insert('categories', {
-              'id': cat['id'],
-              'name': cat['name'],
-              'is_synced': 1,
-            }, conflictAlgorithm: ConflictAlgorithm.replace);
-            insertedCount++;
-          } catch (e) {
-            debugPrint('Failed to mirror category ${cat['id']}: $e');
-          }
-        }
-        debugPrint('Mirrored $insertedCount categories locally.');
-
+        final categories =
+            response.map((json) => Category.fromJson(json)).toList();
+        _mirrorCategoriesToLocal(response);
         yield categories;
         return;
       }
@@ -235,50 +289,31 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
 final productsProvider = StreamProvider<List<Product>>((ref) {
   final supabase = ref.read(supabaseProvider);
   final isOnline = ref.watch(isOnlineProvider);
-  // Manual refresh trigger
+  final isDesktop = !kIsWeb &&
+      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+
+  if (isOnline && isDesktop) {
+    return supabase
+        .from('products')
+        .stream(primaryKey: ['id'])
+        .map((data) {
+          _mirrorProductsToLocal(data);
+          return data.map((json) => Product.fromJson(json)).toList();
+        });
+  }
+
   ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
       if (isOnline) {
-        // Fetch once on refresh/trigger
         final response = await supabase
             .from('products')
             .select()
             .timeout(const Duration(seconds: 5));
-        final products = response
-            .map((json) => Product.fromJson(json))
-            .toList();
-
-        // Mirror locally to avoid issues when using products offline
-        final db = await LocalDatabase.instance.database;
-        int insertedCount = 0;
-        for (var prod in response) {
-          try {
-            await db.insert('products', {
-              'id': prod['id'],
-              'name': prod['name'],
-              'barcode': prod['barcode'],
-              'price': (prod['price'] as num).toDouble(),
-              'cost_price': prod['cost_price'] != null
-                  ? (prod['cost_price'] as num).toDouble()
-                  : null,
-              'quantity': (prod['quantity'] as num).toDouble(),
-              'category_id': prod['category_id'],
-              'image_url': prod['image_url'],
-              'base_unit_id': prod['base_unit_id'],
-              'base_unit_conversion': prod['base_unit_conversion'] != null
-                  ? (prod['base_unit_conversion'] as num).toDouble()
-                  : 1.0,
-              'is_synced': 1,
-            }, conflictAlgorithm: ConflictAlgorithm.replace);
-            insertedCount++;
-          } catch (e) {
-            debugPrint('Failed to mirror product ${prod['id']}: $e');
-          }
-        }
-        debugPrint('Mirrored $insertedCount products locally.');
-
+        final products =
+            response.map((json) => Product.fromJson(json)).toList();
+        _mirrorProductsToLocal(response);
         yield products;
         return;
       }
@@ -598,17 +633,20 @@ class CheckoutRepository {
               .from('products')
               .select('quantity')
               .eq('id', pid)
-              .single();
-          final current = (res['quantity'] as num).toDouble();
-          await supabase
-              .from('products')
-              .update({'quantity': current + val})
-              .eq('id', pid);
-          await supabase.from('stock_movements').insert({
-            'product_id': pid,
-            'change': val,
-            'reason': reason,
-          });
+              .maybeSingle();
+
+          if (res != null) {
+            final current = (res['quantity'] as num).toDouble();
+            await supabase
+                .from('products')
+                .update({'quantity': current + val})
+                .eq('id', pid);
+            await supabase.from('stock_movements').insert({
+              'product_id': pid,
+              'change': val,
+              'reason': reason,
+            });
+          }
         } catch (e) {
           debugPrint('Online stock update failed for $pid: $e');
         }
@@ -710,37 +748,42 @@ class CheckoutRepository {
         );
       }
 
-      // 4. Update Balance (Online)
+      // 4. Update Balance and Log (Online)
       if (paymentType == 'cash') {
-        final remoteBalRes = await supabase
-            .from('balance')
-            .select()
-            .order('id', ascending: false)
-            .limit(1)
-            .maybeSingle();
-        final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
-        await supabase.from('balance').insert({
-          'currentBalance': currentBal + total.toInt(),
-        });
+        // Centralized call to logAndOpen which handles balance update
+        await ref.read(cashDrawerProvider).logAndOpen(
+          type: 'open',
+          reason: 'بيع في فاتورة #$saleId (تلقائي)',
+          amount: total,
+        );
       }
 
-      // 5. Update Local DB for sync consistency (so offline view is correct)
+      // 5. Update Local DB for sync consistency using the remote saleId
       try {
-        final localSaleId = await db.insert('sales', {
-          'total_price': total,
-          'payment_type': paymentType,
-          if (currentUser != null) 'user_id': currentUser.id,
-          'is_synced': 1, // Already synced
-        });
+        await db.insert(
+          'sales',
+          {
+            'id': saleId,
+            'total_price': total,
+            'payment_type': paymentType,
+            if (currentUser != null) 'user_id': currentUser.id,
+            'is_synced': 1,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
 
         for (final item in cartItems) {
           final itemPrice = item.priceOverride ?? item.product.price;
-          await db.insert('sale_items', {
-            'sale_id': localSaleId,
-            'product_id': item.product.id,
-            'quantity': item.quantity,
-            'price': itemPrice,
-          });
+          await db.insert(
+            'sale_items',
+            {
+              'sale_id': saleId,
+              'product_id': item.product.id,
+              'quantity': item.quantity.toInt(),
+              'price': itemPrice,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
         }
       } catch (localError) {
         debugPrint('Local mirror update failed: $localError');
@@ -780,9 +823,12 @@ class CheckoutRepository {
             isOnline: false,
           );
         }
-
         if (paymentType == 'cash') {
-          await _updateDrawerBalance(db, total);
+          await ref.read(cashDrawerProvider).logAndOpen(
+            type: 'open',
+            reason: 'بيع أوفلاين #$saleId',
+            amount: total.toDouble(),
+          );
         }
 
         ref.read(cartProvider.notifier).clear();
@@ -929,7 +975,7 @@ class CheckoutRepository {
       }
 
       ref.read(cartProvider.notifier).clear();
-      ref.invalidate(productsProvider);
+      ref.invalidate(balanceProvider);
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
       return saleId;
@@ -1088,7 +1134,6 @@ class CheckoutRepository {
       }
 
       ref.invalidate(balanceProvider);
-      ref.invalidate(productsProvider);
       ref.invalidate(todaySalesProvider);
       ref.invalidate(todaySalesCountProvider);
       return true;
@@ -1137,6 +1182,118 @@ class CheckoutRepository {
         debugPrint('Offline deletion also failed: $offErr');
         return false;
       }
+    }
+  }
+}
+final cashDrawerProvider = Provider((ref) => CashDrawerRepository(ref));
+
+class CashDrawerRepository {
+  final Ref ref;
+  CashDrawerRepository(this.ref);
+
+  Future<void> logAndOpen({
+    required String type, // 'open', 'add', 'withdraw'
+    String? reason,
+    double amount = 0,
+  }) async {
+    final printingService = ref.read(printingServiceProvider);
+    final currentUser = ref.read(authProvider);
+    final db = await LocalDatabase.instance.database;
+    final supabase = ref.read(supabaseProvider);
+    final isOnline = ref.read(isOnlineProvider);
+
+    // 1. Open the physical drawer
+    try {
+      await printingService.openCashDrawer();
+    } catch (e) {
+      debugPrint('Failed to open cash drawer: $e');
+    }
+
+    // 2. Log the transaction
+    final logMap = {
+      'type': type,
+      'reason': reason,
+      'amount': amount,
+      'user_id': currentUser?.id,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    if (isOnline) {
+      try {
+        // Create a copy of the log map for Supabase
+        final onlineLogMap = Map<String, dynamic>.from(logMap);
+        
+        // Use the custom user_id (bigint) instead of auth UUID
+        onlineLogMap['user_id'] = currentUser?.id;
+
+        await supabase.from('cash_drawer_logs').insert(onlineLogMap);
+        
+        // Update balance table if amount is changed
+        if (amount != 0) {
+          final remoteBalRes = await supabase
+              .from('balance')
+              .select()
+              .order('id', ascending: false)
+              .limit(1)
+              .maybeSingle();
+
+          final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
+          await supabase.from('balance').insert({
+            'currentBalance': currentBal + amount.toInt(),
+          });
+        }
+        
+        logMap['is_synced'] = 1;
+      } catch (e) {
+        debugPrint('Failed to log cash drawer online: $e');
+        logMap['is_synced'] = 0;
+      }
+    } else {
+      logMap['is_synced'] = 0;
+    }
+
+    try {
+      await db.insert('cash_drawer_logs', logMap);
+    } catch (e) {
+      debugPrint('Failed to log cash drawer locally: $e');
+    }
+
+    // 3. Update balance if it's an add/withdraw
+    if (type == 'add' || type == 'withdraw') {
+      final change = type == 'add' ? amount : -amount;
+      
+      final res = await db.query('balance', orderBy: 'id DESC', limit: 1);
+      int currentBal = 0;
+      int? balId;
+      if (res.isNotEmpty) {
+        currentBal = res.first['currentBalance'] as int? ?? 0;
+        balId = res.first['id'] as int;
+      }
+      currentBal += change.toInt();
+      
+      if (balId == null) {
+        await db.insert('balance', {'currentBalance': currentBal, 'is_synced': 0});
+      } else {
+        await db.update('balance', {'currentBalance': currentBal, 'is_synced': 0}, where: 'id = ?', whereArgs: [balId]);
+      }
+
+      if (isOnline) {
+        try {
+          final remoteBalRes = await supabase
+              .from('balance')
+              .select()
+              .order('id', ascending: false)
+              .limit(1)
+              .maybeSingle();
+          final remoteCurrentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
+          await supabase.from('balance').insert({
+            'currentBalance': remoteCurrentBal + change.toInt(),
+          });
+        } catch (e) {
+          debugPrint('Failed to update remote balance: $e');
+        }
+      }
+      ref.invalidate(balanceProvider);
     }
   }
 }

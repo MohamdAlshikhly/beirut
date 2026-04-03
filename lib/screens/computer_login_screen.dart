@@ -21,21 +21,11 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
   final String _sessionId = const Uuid().v4();
   bool _isLoggingIn = false;
   StreamSubscription? _realtimeSubscription;
-  Timer? _pollingTimer;
 
   @override
   void initState() {
     super.initState();
     _setupRealtimeListener();
-    _startPolling();
-  }
-
-  void _startPolling() {
-    _pollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (!_isLoggingIn && mounted) {
-        _checkManually(silent: true);
-      }
-    });
   }
 
   void _setupRealtimeListener() {
@@ -136,7 +126,6 @@ class _ComputerLoginScreenState extends ConsumerState<ComputerLoginScreen> {
   @override
   void dispose() {
     _realtimeSubscription?.cancel();
-    _pollingTimer?.cancel();
     super.dispose();
   }
 

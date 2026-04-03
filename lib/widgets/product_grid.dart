@@ -69,6 +69,8 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
               Expanded(
                 flex: 2,
                 child: categoriesAsync.when(
+                  skipLoadingOnReload: true,
+                  skipLoadingOnRefresh: true,
                   data: (categories) {
                     final pinned = categories
                         .where((c) => pinnedIds.contains(c.id))
@@ -147,6 +149,8 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
         const SizedBox(height: 24),
         Expanded(
           child: productsAsync.when(
+            skipLoadingOnReload: true,
+            skipLoadingOnRefresh: true,
             data: (products) {
               final filteredProducts = products.where((p) {
                 final matchCat = selectedCategory == null
