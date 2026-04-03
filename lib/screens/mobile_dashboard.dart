@@ -21,6 +21,7 @@ import '../widgets/add_stock_dialog.dart';
 import '../widgets/skeleton_container.dart';
 import '../services/sync_service.dart';
 import '../widgets/searchable_dropdown.dart';
+import '../screens/cash_drawer_history_screen.dart';
 
 class MobileDashboard extends ConsumerStatefulWidget {
   const MobileDashboard({super.key});
@@ -363,6 +364,85 @@ class _MainDashboardTab extends ConsumerWidget {
                         ),
                         Text(
                           'إرجاع مواد أو تعديل مبيعات سابقة',
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    PhosphorIconsRegular.caretLeft,
+                    color: isDark ? Colors.white54 : Colors.black54,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          InkWell(
+            onTap: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                barrierDismissible: false,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('فتح الدرج عن بعد'),
+                  content: const Text(
+                    'هل أنت متأكد من رغبتك في فتح درج النقود في الكومبيوتر؟',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('إلغاء'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('فتح'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirm == true) {
+                await ref.read(cashDrawerProvider).logAndOpen(
+                  type: 'open',
+                  reason: 'remote_open',
+                );
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم إرسال أمر الفتح بنجاح!')),
+                  );
+                }
+              }
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: GlassContainer(
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      PhosphorIconsFill.archive,
+                      color: Colors.orange,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'فتح درج النقود (عن بعد)',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          'إرسال أمر فتح للكومبيوتر المتصل',
                           style: TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                       ],
@@ -1032,6 +1112,24 @@ class _UserSettingsTab extends ConsumerWidget {
                   context,
                   MaterialPageRoute(
                     builder: (_) => const SessionsMonitoringScreen(),
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(
+                  PhosphorIconsRegular.archive,
+                  color: Colors.teal,
+                ),
+                title: const Text(
+                  'سجل حركات جرارة الأموال',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                trailing: const Icon(PhosphorIconsRegular.caretLeft),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const CashDrawerHistoryScreen(),
                   ),
                 ),
               ),

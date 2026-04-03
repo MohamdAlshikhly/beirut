@@ -104,6 +104,28 @@ class PrintingService {
     );
   }
 
+  Future<void> openCashDrawer({
+    PrinterDevice? selectedDevice,
+    String? networkIp,
+    PrinterProtocol protocol = PrinterProtocol.escPos,
+  }) async {
+    List<int> bytes = [];
+    if (protocol == PrinterProtocol.escPos) {
+      // ESC/POS command to open cash drawer (Pin 2 and Pin 5)
+      // ESC p m t1 t2
+      bytes = [0x1B, 0x70, 0x00, 0x19, 0xFA];
+    } else {
+      // TSPL command for drawer
+      bytes = utf8.encode('CASHDRAWER\r\n');
+    }
+
+    await _sendBytesToPrinter(
+      Uint8List.fromList(bytes),
+      selectedDevice,
+      networkIp,
+    );
+  }
+
   Future<void> _sendBytesToPrinter(
     Uint8List bytes,
     PrinterDevice? selectedDevice,

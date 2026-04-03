@@ -8,17 +8,31 @@ import '../utils/app_colors.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../screens/sales_history_screen.dart';
 import '../utils/print_utils.dart';
+import '../services/printing_service.dart';
 
 import 'sidebar_history.dart';
 import 'sidebar_details.dart';
 
-class CartSidebar extends ConsumerWidget {
+class CartSidebar extends ConsumerStatefulWidget {
   final VoidCallback? onPaymentSuccess;
 
   const CartSidebar({super.key, this.onPaymentSuccess});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CartSidebar> createState() => _CartSidebarState();
+}
+
+class _CartSidebarState extends ConsumerState<CartSidebar> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final view = ref.watch(sidebarViewProvider);
 
     switch (view) {
@@ -33,11 +47,11 @@ class CartSidebar extends ConsumerWidget {
           child: SidebarDetails(),
         );
       case SidebarView.cart:
-        return _buildCartView(context, ref);
+        return _buildCartView(context);
     }
   }
 
-  Widget _buildCartView(BuildContext context, WidgetRef ref) {
+  Widget _buildCartView(BuildContext context) {
     final cartItems = ref.watch(cartProvider);
     final total = ref.read(cartProvider.notifier).total;
     final theme = Theme.of(context);
@@ -151,17 +165,26 @@ class CartSidebar extends ConsumerWidget {
                       ],
                     ),
                   )
-                : Scrollbar(
-                    thumbVisibility: true,
-                    child: ListView.separated(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: cartItems.length,
-                      separatorBuilder: (c, i) => const SizedBox(height: 12),
-                      itemBuilder: (context, index) {
-                        final item = cartItems[index];
-                        return _CartItemTile(item: item);
-                      },
-                    ),
+                : Column(
+                    children: [
+                      Expanded(
+                        child: Scrollbar(
+                          thumbVisibility: true,
+                          controller: _scrollController,
+                          child: ListView.separated(
+                            controller: _scrollController,
+                            padding: const EdgeInsets.all(16),
+                            itemCount: cartItems.length,
+                            separatorBuilder: (c, i) => const SizedBox(height: 12),
+                            itemBuilder: (context, index) {
+                              final item = cartItems[index];
+                              return _CartItemTile(item: item);
+                            },
+                          ),
+                        ),
+                      ),
+                      if (cartItems.isNotEmpty) _LinkedProductsSection(cartItems: cartItems),
+                    ],
                   ),
           ),
           Container(
@@ -343,8 +366,17 @@ class CartSidebar extends ConsumerWidget {
       Navigator.of(context).pop();
 
       if (saleId != null) {
-        if (onPaymentSuccess != null) {
-          onPaymentSuccess!();
+        // Open drawer for cash payments
+        if (method == 'cash') {
+          try {
+            ref.read(printingServiceProvider).openCashDrawer();
+          } catch (e) {
+            debugPrint('Auto open drawer failed: $e');
+          }
+        }
+
+        if (widget.onPaymentSuccess != null) {
+          widget.onPaymentSuccess!();
         }
 
         // Show Print Receipt Dialog only if requested
@@ -692,6 +724,125 @@ class _ShortcutInfo extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+class _LinkedProductsSection extends ConsumerWidget {
+  final List<CartItem> cartItems;
+  const _LinkedProductsSection({required this.cartItems});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final allProductsAsync = ref.watch(productsProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return allProductsAsync.when(
+      data: (allProducts) {
+        // Collect linked product IDs
+        final linkedIds = <int>{};
+        for (var item in cartItems) {
+          final p = item.product;
+          // 1. Add base unit if exists
+          if (p.baseUnitId != null) linkedIds.add(p.baseUnitId!);
+          // 2. Add any product that lists this cart item as its base unit
+          for (var other in allProducts) {
+            if (other.baseUnitId == p.id) linkedIds.add(other.id);
+          }
+        }
+
+        // Deduplicate with items already in cart
+        final cartIds = cartItems.map((e) => e.product.id).toSet();
+        final suggestionIds = linkedIds.difference(cartIds);
+
+        if (suggestionIds.isEmpty) return const SizedBox.shrink();
+
+        final suggestions = allProducts.where((p) => suggestionIds.contains(p.id)).toList();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Divider(height: 1),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text(
+                'منتجات مرتبطة متوفرة',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 100,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: suggestions.length,
+                itemBuilder: (context, index) {
+                  final prod = suggestions[index];
+                  return Container(
+                    width: 160,
+                    margin: const EdgeInsets.only(right: 12, bottom: 8),
+                    child: InkWell(
+                      onTap: () {
+                        ref.read(cartProvider.notifier).addProduct(prod);
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: GlassContainer(
+                        padding: const EdgeInsets.all(8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    prod.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${NumberFormat('#,##0', 'en_US').format(prod.price)} IQD',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: isDark ? Colors.white70 : Colors.black54,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                PhosphorIconsRegular.plus,
+                                size: 16,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 }

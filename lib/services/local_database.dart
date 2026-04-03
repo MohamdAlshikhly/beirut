@@ -27,7 +27,7 @@ class LocalDatabase {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -61,6 +61,20 @@ class LocalDatabase {
       await db.execute(
         'ALTER TABLE products ADD COLUMN base_unit_conversion REAL DEFAULT 1.0',
       );
+    }
+    if (oldVersion < 7) {
+      await db.execute('''
+      CREATE TABLE cash_drawer_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reason TEXT,
+        amount REAL DEFAULT 0,
+        type TEXT NOT NULL, -- 'open', 'add', 'withdraw'
+        user_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        is_synced INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users (id)
+      )
+      ''');
     }
   }
 
@@ -171,6 +185,20 @@ class LocalDatabase {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       is_synced INTEGER DEFAULT 0,
       FOREIGN KEY (product_id) REFERENCES products (id)
+    )
+    ''');
+
+    // 9. cash_drawer_logs
+    await db.execute('''
+    CREATE TABLE cash_drawer_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reason TEXT,
+      amount REAL DEFAULT 0,
+      type TEXT NOT NULL,
+      user_id INTEGER,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      is_synced INTEGER DEFAULT 0,
+      FOREIGN KEY (user_id) REFERENCES users (id)
     )
     ''');
   }
