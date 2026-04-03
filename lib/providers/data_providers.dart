@@ -169,35 +169,41 @@ Future<void> _mirrorCategoriesToLocal(List<Map<String, dynamic>> data) async {
 }
 
 Future<void> _mirrorProductsToLocal(List<Map<String, dynamic>> data) async {
+  final db = await LocalDatabase.instance.database;
   try {
-    final db = await LocalDatabase.instance.database;
+    // Disable FK checks during mirror — categories may not be local yet
+    await db.execute('PRAGMA foreign_keys = OFF');
     for (var prod in data) {
-      await db.insert(
-        'products',
-        {
-          'id': prod['id'],
-          'name': prod['name'],
-          'barcode': prod['barcode'],
-          'price': (prod['price'] as num).toDouble(),
-          'cost_price': prod['cost_price'] != null
-              ? (prod['cost_price'] as num).toDouble()
-              : null,
-          'quantity': prod['quantity'] != null
-              ? (prod['quantity'] as num).toDouble()
-              : 0.0,
-          'category_id': prod['category_id'],
-          'image_url': prod['image_url'],
-          'base_unit_id': prod['base_unit_id'],
-          'base_unit_conversion': prod['base_unit_conversion'] != null
-              ? (prod['base_unit_conversion'] as num).toDouble()
-              : 1.0,
-          'is_synced': 1,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      try {
+        await db.insert(
+          'products',
+          {
+            'id': prod['id'],
+            'name': prod['name'],
+            'barcode': prod['barcode'],
+            'price': (prod['price'] as num).toDouble(),
+            'cost_price': prod['cost_price'] != null
+                ? (prod['cost_price'] as num).toDouble()
+                : null,
+            'quantity': prod['quantity'] != null
+                ? (prod['quantity'] as num).toDouble()
+                : 0.0,
+            'category_id': prod['category_id'],
+            'image_url': prod['image_url'],
+            'base_unit_id': prod['base_unit_id'],
+            'base_unit_conversion': prod['base_unit_conversion'] != null
+                ? (prod['base_unit_conversion'] as num).toDouble()
+                : 1.0,
+            'is_synced': 1,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      } catch (e) {
+        debugPrint('Mirror single product ${prod['id']} failed: $e');
+      }
     }
-  } catch (e) {
-    debugPrint('Mirror products to local failed: $e');
+  } finally {
+    await db.execute('PRAGMA foreign_keys = ON');
   }
 }
 
