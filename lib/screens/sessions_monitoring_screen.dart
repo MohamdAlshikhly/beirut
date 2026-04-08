@@ -21,6 +21,7 @@ class _SessionsMonitoringScreenState
   bool _isLoading = true;
   List<SessionLog> _sessions = [];
   StreamSubscription? _realtimeSubscription;
+  final Set<int> _endingSessionIds = {};
 
   @override
   void initState() {
@@ -67,6 +68,8 @@ class _SessionsMonitoringScreenState
   }
 
   Future<void> _endSession(int sessionId) async {
+    if (_endingSessionIds.contains(sessionId)) return;
+    setState(() => _endingSessionIds.add(sessionId));
     try {
       final supabase = ref.read(supabaseProvider);
       await supabase
@@ -76,14 +79,15 @@ class _SessionsMonitoringScreenState
             'ended_at': DateTime.now().toUtc().toIso8601String(),
           })
           .eq('id', sessionId);
-
-      _fetchSessions(); // Refresh list
+      await _fetchSessions();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('فشل إنهاء الجلسة: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('فشل إنهاء الجلسة، تحقق من الاتصال')),
+        );
       }
+    } finally {
+      if (mounted) setState(() => _endingSessionIds.remove(sessionId));
     }
   }
 
@@ -230,8 +234,19 @@ class _SessionsMonitoringScreenState
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                 ),
-                                onPressed: () => _endSession(session.id),
-                                child: const Text('إنهاء'),
+                                onPressed: _endingSessionIds.contains(session.id)
+                                    ? null
+                                    : () => _endSession(session.id),
+                                child: _endingSessionIds.contains(session.id)
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text('إنهاء'),
                               )
                             else
                               Container(

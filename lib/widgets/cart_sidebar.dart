@@ -12,6 +12,7 @@ import '../services/printing_service.dart';
 
 import 'sidebar_history.dart';
 import 'sidebar_details.dart';
+import 'cash_change_dialog.dart';
 
 class CartSidebar extends ConsumerStatefulWidget {
   final VoidCallback? onPaymentSuccess;
@@ -175,7 +176,8 @@ class _CartSidebarState extends ConsumerState<CartSidebar> {
                             controller: _scrollController,
                             padding: const EdgeInsets.all(16),
                             itemCount: cartItems.length,
-                            separatorBuilder: (c, i) => const SizedBox(height: 12),
+                            separatorBuilder: (c, i) =>
+                                const SizedBox(height: 12),
                             itemBuilder: (context, index) {
                               final item = cartItems[index];
                               return _CartItemTile(item: item);
@@ -183,7 +185,8 @@ class _CartSidebarState extends ConsumerState<CartSidebar> {
                           ),
                         ),
                       ),
-                      if (cartItems.isNotEmpty) _LinkedProductsSection(cartItems: cartItems),
+                      if (cartItems.isNotEmpty)
+                        _LinkedProductsSection(cartItems: cartItems),
                     ],
                   ),
           ),
@@ -265,83 +268,85 @@ class _CartSidebarState extends ConsumerState<CartSidebar> {
     final cartItems = ref.read(cartProvider);
     final total = ref.read(cartProvider.notifier).total;
 
-    final result = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => Focus(
-        autofocus: true,
-        onKeyEvent: (node, event) {
-          if (event is KeyDownEvent) {
-            if (event.logicalKey == LogicalKeyboardKey.enter ||
-                event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-              Navigator.pop(ctx, 'print');
-              return KeyEventResult.handled;
-            } else if (event.logicalKey == LogicalKeyboardKey.f12) {
-              Navigator.pop(ctx, 'no_print');
-              return KeyEventResult.handled;
-            } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-              Navigator.pop(ctx, null);
-              return KeyEventResult.handled;
+    // Cash → show change calculator; Card → show simple confirm dialog
+    final String? result;
+    if (method == 'cash') {
+      result = await showCashChangeDialog(context, total: total);
+    } else {
+      result = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => Focus(
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent) {
+              if (event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                Navigator.pop(ctx, 'print');
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.f12) {
+                Navigator.pop(ctx, 'no_print');
+                return KeyEventResult.handled;
+              } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                Navigator.pop(ctx, null);
+                return KeyEventResult.handled;
+              }
             }
-          }
-          return KeyEventResult.ignored;
-        },
-        child: AlertDialog(
-          title: Text(
-            method == 'cash'
-                ? 'إتمام الفاتورة (نقدي)'
-                : 'إتمام الفاتورة (بطاقة)',
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'اختر طريقة الحفظ المناسبة:',
-                style: TextStyle(fontSize: 18),
+            return KeyEventResult.ignored;
+          },
+          child: AlertDialog(
+            title: const Text('إتمام الفاتورة (بطاقة)'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'اختر طريقة الحفظ المناسبة:',
+                  style: TextStyle(fontSize: 18),
+                ),
+                const SizedBox(height: 20),
+                _ShortcutInfo(
+                  label: 'إتمام وطباعة الفاتورة',
+                  shortcut: 'Enter',
+                  icon: PhosphorIconsRegular.printer,
+                ),
+                const SizedBox(height: 12),
+                _ShortcutInfo(
+                  label: 'إتمام فقط (بدون طباعة)',
+                  shortcut: 'F12',
+                  icon: PhosphorIconsRegular.checkCircle,
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('إلغاء (Esc)'),
               ),
-              const SizedBox(height: 20),
-              _ShortcutInfo(
-                label: 'إتمام وطباعة الفاتورة',
-                shortcut: 'Enter',
-                icon: PhosphorIconsRegular.printer,
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(ctx, 'no_print'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.secondary,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(PhosphorIconsRegular.check),
+                label: const Text('إتمام فقط (F12)'),
               ),
-              const SizedBox(height: 12),
-              _ShortcutInfo(
-                label: 'إتمام فقط (بدون طباعة)',
-                shortcut: 'F12',
-                icon: PhosphorIconsRegular.checkCircle,
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(ctx, 'print'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.secondary,
+                ),
+                icon: const Icon(PhosphorIconsRegular.printer),
+                label: const Text('إتمام وطباعة (Enter)'),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, null),
-              child: const Text('إلغاء (Esc)'),
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.pop(ctx, 'no_print'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.secondary,
-                foregroundColor: Colors.white,
-              ),
-              icon: const Icon(PhosphorIconsRegular.check),
-              label: const Text('إتمام فقط (F12)'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.pop(ctx, 'print'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.secondary,
-              ),
-              icon: const Icon(PhosphorIconsRegular.printer),
-              label: const Text('إتمام وطباعة (Enter)'),
-            ),
-          ],
         ),
-      ),
-    );
+      );
+    }
 
     if (result == null) return;
     final shouldPrint = result == 'print';
@@ -727,6 +732,7 @@ class _ShortcutInfo extends StatelessWidget {
     );
   }
 }
+
 class _LinkedProductsSection extends ConsumerWidget {
   final List<CartItem> cartItems;
   const _LinkedProductsSection({required this.cartItems});
@@ -756,7 +762,9 @@ class _LinkedProductsSection extends ConsumerWidget {
 
         if (suggestionIds.isEmpty) return const SizedBox.shrink();
 
-        final suggestions = allProducts.where((p) => suggestionIds.contains(p.id)).toList();
+        final suggestions = allProducts
+            .where((p) => suggestionIds.contains(p.id))
+            .toList();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -811,7 +819,9 @@ class _LinkedProductsSection extends ConsumerWidget {
                                     '${NumberFormat('#,##0', 'en_US').format(prod.price)} IQD',
                                     style: TextStyle(
                                       fontSize: 10,
-                                      color: isDark ? Colors.white70 : Colors.black54,
+                                      color: isDark
+                                          ? Colors.white70
+                                          : Colors.black54,
                                     ),
                                   ),
                                 ],

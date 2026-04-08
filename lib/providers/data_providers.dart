@@ -538,13 +538,13 @@ class CartNotifier extends Notifier<List<CartItem>> {
     // Card items are always separate entries (each card is a distinct item)
     if (cardId != null) {
       state = [
-        ...state,
         CartItem(
           product: product,
           quantity: 1,
           priceOverride: priceOverride,
           cardId: cardId,
         ),
+        ...state,
       ];
       return;
     }
@@ -553,15 +553,15 @@ class CartNotifier extends Notifier<List<CartItem>> {
           item.product.id == product.id && item.priceOverride == priceOverride,
     );
     if (existingIndex >= 0) {
-      final updatedCart = [...state];
-      updatedCart[existingIndex] = updatedCart[existingIndex].copyWith(
-        quantity: updatedCart[existingIndex].quantity + 1,
-      );
-      state = updatedCart;
+      final item = state[existingIndex];
+      final updatedItem = item.copyWith(quantity: item.quantity + 1);
+      final newState = [...state];
+      newState.removeAt(existingIndex);
+      state = [updatedItem, ...newState];
     } else {
       state = [
-        ...state,
         CartItem(product: product, quantity: 1, priceOverride: priceOverride),
+        ...state,
       ];
     }
   }

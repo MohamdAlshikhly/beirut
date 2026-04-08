@@ -65,12 +65,40 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
   }
 
   void _save() async {
-    if (_nameController.text.trim().isEmpty || _priceController.text.isEmpty) {
+    final name = _nameController.text.trim();
+    final price = double.tryParse(_priceController.text);
+    final costPrice = _costPriceController.text.isNotEmpty
+        ? double.tryParse(_costPriceController.text)
+        : null;
+    final qty = _qtyController.text.isNotEmpty
+        ? double.tryParse(_qtyController.text)
+        : 0.0;
+
+    if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الرجاء إدخال اسم المنتج وسعره')),
+        const SnackBar(content: Text('يرجى إدخال اسم المنتج')),
       );
       return;
     }
+    if (price == null || price < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال سعر صحيح')),
+      );
+      return;
+    }
+    if (costPrice == null && _costPriceController.text.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('سعر التكلفة غير صحيح')),
+      );
+      return;
+    }
+    if (qty == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('الكمية غير صحيحة')),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       String? imageUrl;
@@ -80,17 +108,13 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       final db = await LocalDatabase.instance.database;
 
       final productData = {
-        'name': _nameController.text.trim(),
+        'name': name,
         'barcode': _barcodeController.text.trim().isEmpty
             ? null
             : _barcodeController.text.trim(),
-        'price': double.parse(_priceController.text),
-        'cost_price': _costPriceController.text.isNotEmpty
-            ? double.parse(_costPriceController.text)
-            : null,
-        'quantity': _qtyController.text.isNotEmpty
-            ? double.parse(_qtyController.text)
-            : 0.0,
+        'price': price,
+        'cost_price': costPrice,
+        'quantity': qty,
         'category_id': _selectedCategoryId,
         'image_url': imageUrl,
         'base_unit_id': _selectedBaseUnitId,

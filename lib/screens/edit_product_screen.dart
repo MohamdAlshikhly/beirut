@@ -80,9 +80,28 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
   }
 
   void _save() async {
-    if (_nameController.text.trim().isEmpty || _priceController.text.isEmpty) {
+    final name = _nameController.text.trim();
+    final price = double.tryParse(_priceController.text);
+    final costPrice = _costPriceController.text.isNotEmpty
+        ? double.tryParse(_costPriceController.text)
+        : null;
+    final newQty = double.tryParse(_qtyController.text);
+
+    if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يرجى إكمال البيانات الأساسية')),
+        const SnackBar(content: Text('يرجى إدخال اسم المنتج')),
+      );
+      return;
+    }
+    if (price == null || price < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال سعر صحيح')),
+      );
+      return;
+    }
+    if (newQty == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('الكمية غير صحيحة')),
       );
       return;
     }
@@ -91,21 +110,18 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
     try {
       final imageUrl = await _uploadImage();
       final supabase = ref.read(supabaseProvider);
-      final newQty = double.parse(_qtyController.text);
       final oldQty = widget.product.quantity;
       final diff = newQty - oldQty;
 
       await supabase
           .from('products')
           .update({
-            'name': _nameController.text.trim(),
+            'name': name,
             'barcode': _barcodeController.text.trim().isEmpty
                 ? null
                 : _barcodeController.text.trim(),
-            'price': double.parse(_priceController.text),
-            'cost_price': _costPriceController.text.isNotEmpty
-                ? double.parse(_costPriceController.text)
-                : null,
+            'price': price,
+            'cost_price': costPrice,
             // Note: We don't update quantity here directly to let linkage handle it if diff != 0
             // but we update other linkage fields
             'category_id': _selectedCategoryId,
@@ -140,7 +156,12 @@ class _EditProductScreenState extends ConsumerState<EditProductScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(e.toString().contains('duplicate')
+                ? 'الباركود مستخدم من قبل — جرب باركود آخر'
+                : 'فشل التحديث، تحقق من الاتصال'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {

@@ -17,6 +17,40 @@ class SyncService {
 
   final _supabase = Supabase.instance.client;
 
+  // Prevent concurrent syncUp calls (avoids duplicate uploads)
+  bool _isSyncing = false;
+
+  /// Returns true if there is any local data waiting to be pushed to Supabase.
+  Future<bool> hasUnsyncedData() async {
+    try {
+      final db = await LocalDatabase.instance.database;
+      final sales = await db.query(
+        'sales',
+        where: 'is_synced = ?',
+        whereArgs: [0],
+        limit: 1,
+      );
+      if (sales.isNotEmpty) return true;
+      final movements = await db.query(
+        'stock_movements',
+        where: 'is_synced = ?',
+        whereArgs: [0],
+        limit: 1,
+      );
+      if (movements.isNotEmpty) return true;
+      final products = await db.query(
+        'products',
+        where: 'is_synced = ?',
+        whereArgs: [0],
+        limit: 1,
+      );
+      if (products.isNotEmpty) return true;
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   void _initRealtimeListener() {
     // Only listen on Desktop (Mac/Windows/Linux) as they are the primary POS terminals
     if (kIsWeb) return;
@@ -226,6 +260,8 @@ class SyncService {
   }
 
   Future<void> syncUp() async {
+    if (_isSyncing) return; // Prevent concurrent/duplicate sync runs
+    _isSyncing = true;
     try {
       final db = await LocalDatabase.instance.database;
 
@@ -239,37 +275,59 @@ class SyncService {
       for (var sale in unsyncedSales) {
         final saleMap = Map<String, dynamic>.from(sale);
         final localSaleId = saleMap['id'];
+        final existingRemoteId = saleMap['remote_id'];
 
-        saleMap.remove('id');
-        saleMap.remove('is_synced');
+        int remoteSaleId;
 
-        // Insert Sale to Supabase
-        final remoteSale = await _supabase
-            .from('sales')
-            .insert(saleMap)
-            .select()
-            .single();
-        final remoteSaleId = remoteSale['id'];
+        if (existingRemoteId == null) {
+          // ── Fresh upload ──
+          saleMap.remove('id');
+          saleMap.remove('is_synced');
+          saleMap.remove('remote_id');
 
-        // If cash sale, update remote balance (Stateless Reconciliation)
-        if (saleMap['payment_type'] == 'cash') {
-          try {
-            final totalPriceNum = saleMap['total_price'] as num;
-            final remoteBalRes = await _supabase
-                .from('balance')
-                .select()
-                .order('id', ascending: false)
-                .limit(1)
-                .maybeSingle();
-            final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
-            await _supabase.from('balance').insert({
-              'currentBalance': currentBal + totalPriceNum.toInt(),
-            });
-          } catch (balErr) {
-            debugPrint(
-              '⚠️ Error updating remote balance during syncUp: $balErr',
-            );
+          // Insert Sale to Supabase
+          final remoteSale = await _supabase
+              .from('sales')
+              .insert(saleMap)
+              .select()
+              .single();
+          remoteSaleId = remoteSale['id'];
+
+          // Save remote_id IMMEDIATELY — prevents duplicate insert if app
+          // crashes before is_synced is set to 1.
+          await db.update(
+            'sales',
+            {'remote_id': remoteSaleId},
+            where: 'id = ?',
+            whereArgs: [localSaleId],
+          );
+
+          // If cash sale, update remote balance (Stateless Reconciliation)
+          if (saleMap['payment_type'] == 'cash') {
+            try {
+              final totalPriceNum = saleMap['total_price'] as num;
+              final remoteBalRes = await _supabase
+                  .from('balance')
+                  .select()
+                  .order('id', ascending: false)
+                  .limit(1)
+                  .maybeSingle();
+              final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
+              await _supabase.from('balance').insert({
+                'currentBalance': currentBal + totalPriceNum.toInt(),
+              });
+            } catch (balErr) {
+              debugPrint(
+                '⚠️ Error updating remote balance during syncUp: $balErr',
+              );
+            }
           }
+        } else {
+          // ── Crash recovery: sale already uploaded, skip insert & balance ──
+          remoteSaleId = existingRemoteId as int;
+          debugPrint(
+            'ℹ️ Sale $localSaleId already uploaded (remote: $remoteSaleId), skipping insert.',
+          );
         }
 
         // Fetch local sale items
@@ -286,12 +344,12 @@ class SyncService {
 
           final mapToSync = Map<String, dynamic>.from(itemMap);
           mapToSync['quantity'] = (mapToSync['quantity'] as num).toInt();
-          await _supabase.from('sale_items').insert(mapToSync);
-
-          // Update Remote Stock:
-          // We NO LONGER update stock here manually because we rely on the
-          // 'stock_movements' table sync below to handle all quantity changes
-          // (including linkage).
+          try {
+            await _supabase.from('sale_items').insert(mapToSync);
+          } catch (itemErr) {
+            // May already exist in crash-recovery scenario — safe to ignore
+            debugPrint('ℹ️ Sale item already exists or error: $itemErr');
+          }
         }
 
         // Mark as synced locally
@@ -431,6 +489,8 @@ class SyncService {
       } else {
         debugPrint('❌ Sync Up Error: $e');
       }
+    } finally {
+      _isSyncing = false;
     }
   }
 }

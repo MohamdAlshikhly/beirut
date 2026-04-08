@@ -52,18 +52,22 @@ Future<void> main() async {
   final syncService = container.read(syncServiceProvider);
 
   // Initial Sync: Upload offline data first, then download new updates
-  final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  syncService.syncUp();
+  syncService.syncDown();
 
-  if (!isMobile) {
-    syncService.syncUp();
-    syncService.syncDown();
-
-    // Start Periodic Sync (Every 5 minutes)
-    Timer.periodic(const Duration(minutes: 5), (timer) {
+  // Smart background sync: every 30 s, silently push any pending data.
+  // Only calls syncUp when there is actually something to upload, so it
+  // has no visible effect on the user when everything is already in sync.
+  Timer.periodic(const Duration(seconds: 30), (timer) async {
+    if (await syncService.hasUnsyncedData()) {
       syncService.syncUp();
-      syncService.syncDown();
-    });
-  }
+    }
+  });
+
+  // Pull remote changes (products, prices, users) every 2 minutes.
+  Timer.periodic(const Duration(minutes: 2), (timer) {
+    syncService.syncDown();
+  });
 
   runApp(UncontrolledProviderScope(container: container, child: const MyApp()));
 }
@@ -93,7 +97,7 @@ class MyApp extends ConsumerWidget {
         return MediaQuery(
           data: MediaQuery.of(
             context,
-          ).copyWith(textScaler: const TextScaler.linear(0.8)),
+          ).copyWith(textScaler: const TextScaler.linear(0.9)),
           child: child!,
         );
       },
@@ -126,22 +130,19 @@ class MyApp extends ConsumerWidget {
       colorSchemeSeed: AppColors.primary,
     );
 
-    // Scaling down standard font sizes for compact UI
     final textTheme = baseTheme.textTheme.copyWith(
       displayLarge: baseTheme.textTheme.displayLarge?.copyWith(fontSize: 48),
       displayMedium: baseTheme.textTheme.displayMedium?.copyWith(fontSize: 40),
       displaySmall: baseTheme.textTheme.displaySmall?.copyWith(fontSize: 32),
       headlineLarge: baseTheme.textTheme.headlineLarge?.copyWith(fontSize: 28),
-      headlineMedium: baseTheme.textTheme.headlineMedium?.copyWith(
-        fontSize: 24,
-      ),
+      headlineMedium: baseTheme.textTheme.headlineMedium?.copyWith(fontSize: 24),
       headlineSmall: baseTheme.textTheme.headlineSmall?.copyWith(fontSize: 20),
-      titleLarge: baseTheme.textTheme.titleLarge?.copyWith(fontSize: 18),
-      titleMedium: baseTheme.textTheme.titleMedium?.copyWith(fontSize: 14),
-      titleSmall: baseTheme.textTheme.titleSmall?.copyWith(fontSize: 12),
-      bodyLarge: baseTheme.textTheme.bodyLarge?.copyWith(fontSize: 14),
-      bodyMedium: baseTheme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-      bodySmall: baseTheme.textTheme.bodySmall?.copyWith(fontSize: 10),
+      titleLarge: baseTheme.textTheme.titleLarge?.copyWith(fontSize: 20),
+      titleMedium: baseTheme.textTheme.titleMedium?.copyWith(fontSize: 16),
+      titleSmall: baseTheme.textTheme.titleSmall?.copyWith(fontSize: 14),
+      bodyLarge: baseTheme.textTheme.bodyLarge?.copyWith(fontSize: 16),
+      bodyMedium: baseTheme.textTheme.bodyMedium?.copyWith(fontSize: 14),
+      bodySmall: baseTheme.textTheme.bodySmall?.copyWith(fontSize: 12),
     );
 
     return baseTheme.copyWith(

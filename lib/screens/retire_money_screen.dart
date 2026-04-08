@@ -17,14 +17,14 @@ class _RetireMoneyScreenState extends ConsumerState<RetireMoneyScreen> {
   final _amountController = TextEditingController();
   bool _isLoading = false;
 
-  void _save(double maxAmount) async {
+  void _save(int maxAmount) async {
     if (_amountController.text.isEmpty) return;
-    final amount = double.tryParse(_amountController.text) ?? 0;
+    final amount = int.tryParse(_amountController.text);
 
-    if (amount <= 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('يرجى إدخال مبلغ صحيح')));
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال مبلغ صحيح (أرقام فقط)')),
+      );
       return;
     }
 
@@ -46,11 +46,11 @@ class _RetireMoneyScreenState extends ConsumerState<RetireMoneyScreen> {
           .limit(1)
           .maybeSingle();
 
-      double currentBal = (res?['currentBalance'] as num?)?.toDouble() ?? 0.0;
-      currentBal -= amount;
+      final currentBal = (res?['currentBalance'] as num?)?.toInt() ?? 0;
+      final newBal = currentBal - amount;
 
       await client.from('balance').insert({
-        'currentBalance': currentBal.toInt(),
+        'currentBalance': newBal,
       });
 
       ref.invalidate(balanceProvider);
@@ -169,7 +169,7 @@ class _RetireMoneyScreenState extends ConsumerState<RetireMoneyScreen> {
                 ),
                 const SizedBox(height: 48),
                 ElevatedButton(
-                  onPressed: _isLoading ? null : () => _save(curBal.toDouble()),
+                  onPressed: _isLoading ? null : () => _save(curBal),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.redAccent,
                     foregroundColor: Colors.white,

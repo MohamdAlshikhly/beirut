@@ -467,7 +467,7 @@ class _ProductCard extends ConsumerWidget {
                         ),
                         child: Center(
                           child: Text(
-                            'المخزون: ${product.quantity}',
+                            '${product.quantity}',
                             style: TextStyle(fontSize: 16),
                           ),
                         ),
@@ -482,5 +482,4 @@ class _ProductCard extends ConsumerWidget {
       ),
     );
   }
-
 }

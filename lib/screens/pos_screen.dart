@@ -13,6 +13,7 @@ import '../utils/app_colors.dart';
 import '../services/sync_service.dart';
 import '../utils/print_utils.dart';
 import '../widgets/cash_drawer_dialog.dart';
+import '../widgets/cash_change_dialog.dart';
 
 class PosScreen extends ConsumerStatefulWidget {
   const PosScreen({super.key});
@@ -111,81 +112,9 @@ class _PosScreenState extends ConsumerState<PosScreen> {
   void _showCheckoutConfirmation() {
     setState(() => _isCheckoutDialogOpen = true);
 
-    showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        return Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent) {
-              if (event.logicalKey == LogicalKeyboardKey.enter ||
-                  event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-                Navigator.pop(ctx, 'print');
-                return KeyEventResult.handled;
-              } else if (event.logicalKey == LogicalKeyboardKey.f12) {
-                Navigator.pop(ctx, 'no_print');
-                return KeyEventResult.handled;
-              } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-                Navigator.pop(ctx, null);
-                return KeyEventResult.handled;
-              }
-            }
-            return KeyEventResult.ignored;
-          },
-          child: AlertDialog(
-            title: const Text('إتمام الفاتورة'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'اختر طريقة الحفظ المناسبة:',
-                  style: TextStyle(fontSize: 18),
-                ),
-                const SizedBox(height: 20),
-                _ShortcutInfo(
-                  label: 'إتمام وطباعة الفاتورة',
-                  shortcut: 'Enter',
-                  icon: PhosphorIconsRegular.printer,
-                ),
-                const SizedBox(height: 12),
-                _ShortcutInfo(
-                  label: 'إتمام فقط (بدون طباعة)',
-                  shortcut: 'F12',
-                  icon: PhosphorIconsRegular.checkCircle,
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, null),
-                child: const Text('إلغاء (Esc)'),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: () => Navigator.pop(ctx, 'no_print'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.secondary,
-                  foregroundColor: Colors.white,
-                ),
-                icon: const Icon(PhosphorIconsRegular.check),
-                label: const Text('إتمام فقط (F12)'),
-              ),
-              ElevatedButton.icon(
-                onPressed: () => Navigator.pop(ctx, 'print'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: AppColors.secondary,
-                ),
-                icon: const Icon(PhosphorIconsRegular.printer),
-                label: const Text('إتمام وطباعة (Enter)'),
-              ),
-            ],
-          ),
-        );
-      },
-    ).then((result) {
+    final total = ref.read(cartProvider.notifier).total;
+
+    showCashChangeDialog(context, total: total).then((result) {
       if (mounted) setState(() => _isCheckoutDialogOpen = false);
       if (result != null) {
         _processPaymentGlobally('cash', shouldPrint: result == 'print');
@@ -437,43 +366,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ShortcutInfo extends StatelessWidget {
-  final String label;
-  final String shortcut;
-  final IconData icon;
-
-  const _ShortcutInfo({
-    required this.label,
-    required this.shortcut,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 20, color: AppColors.primary),
-        const SizedBox(width: 12),
-        Expanded(child: Text(label, style: const TextStyle(fontSize: 16))),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.grey.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            shortcut,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontFamily: 'monospace',
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

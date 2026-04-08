@@ -27,7 +27,7 @@ class LocalDatabase {
 
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -91,6 +91,12 @@ class LocalDatabase {
         FOREIGN KEY (product_id) REFERENCES products (id)
       )
       ''');
+    }
+    if (oldVersion < 9) {
+      // Add remote_id to sales for duplicate-upload prevention
+      await db.execute(
+        'ALTER TABLE sales ADD COLUMN remote_id INTEGER',
+      );
     }
   }
 
@@ -160,6 +166,7 @@ class LocalDatabase {
       payment_type TEXT NOT NULL,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       user_id INTEGER,
+      remote_id INTEGER,
       is_synced INTEGER DEFAULT 0,
       FOREIGN KEY (user_id) REFERENCES users (id)
     )

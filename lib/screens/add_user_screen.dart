@@ -51,8 +51,11 @@ class _AddUserScreenState extends ConsumerState<AddUserScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final msg = e.toString().contains('duplicate')
+            ? 'اسم المستخدم موجود مسبقاً، اختر اسماً آخر'
+            : 'فشل إضافة المستخدم، تحقق من الاتصال';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(msg), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -115,7 +118,7 @@ class _AddUserScreenState extends ConsumerState<AddUserScreen> {
                     ),
                     const SizedBox(height: 20),
                     DropdownButtonFormField<String>(
-                      value: _role,
+                      initialValue: _role,
                       decoration: InputDecoration(
                         labelText: 'الصلاحية (الدور)',
                         prefixIcon: const Icon(
