@@ -7,7 +7,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   connectivity_plus
   file_selector_windows
   flutter_pos_printer_platform
-  msix
   network_info_plus_windows
   sqlite3_flutter_libs
   url_launcher_windows

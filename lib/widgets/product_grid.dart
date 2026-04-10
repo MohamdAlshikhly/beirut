@@ -94,37 +94,48 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
                           ),
                           tooltip: 'تخصيص الأقسام',
                         ),
-                        _CategoryChip(
-                          title: 'الكل',
-                          isSelected: selectedCategory == null,
-                          onTap: () => ref
-                              .read(selectedCategoryProvider.notifier)
-                              .set(null),
-                        ),
-                        const SizedBox(width: 8),
-                        ...pinned.map(
-                          (cat) => Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
-                            child: _CategoryChip(
-                              title: cat.name,
-                              isSelected: selectedCategory == cat.id,
-                              onTap: () => ref
-                                  .read(selectedCategoryProvider.notifier)
-                                  .set(cat.id),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            physics: const BouncingScrollPhysics(),
+                            child: Row(
+                              children: [
+                                _CategoryChip(
+                                  title: 'الكل',
+                                  isSelected: selectedCategory == null,
+                                  onTap: () => ref
+                                      .read(selectedCategoryProvider.notifier)
+                                      .set(null),
+                                ),
+                                const SizedBox(width: 8),
+                                ...pinned.map(
+                                  (cat) => Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: _CategoryChip(
+                                      title: cat.name,
+                                      isSelected: selectedCategory == cat.id,
+                                      onTap: () => ref
+                                          .read(selectedCategoryProvider.notifier)
+                                          .set(cat.id),
+                                    ),
+                                  ),
+                                ),
+                                if (isHiddenSelected)
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: _CategoryChip(
+                                      title: categories
+                                          .firstWhere(
+                                              (c) => c.id == selectedCategory)
+                                          .name,
+                                      isSelected: true,
+                                      onTap: () {},
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
                         ),
-                        if (isHiddenSelected)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
-                            child: _CategoryChip(
-                              title: categories
-                                  .firstWhere((c) => c.id == selectedCategory)
-                                  .name,
-                              isSelected: true,
-                              onTap: () {},
-                            ),
-                          ),
                       ],
                     );
                   },

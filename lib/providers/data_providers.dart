@@ -587,8 +587,15 @@ class CartNotifier extends Notifier<List<CartItem>> {
     }
   }
 
+  /// Load an arbitrary set of items (used when switching between carts).
+  void loadItems(List<CartItem> items) {
+    state = items;
+    ref.read(editingSaleIdProvider.notifier).set(null);
+    ref.read(originalCartItemsProvider.notifier).set([]);
+  }
+
   void clear() {
-    state = [];
+    state = ref.read(multiCartProvider.notifier).removeActiveCart();
     ref.read(editingSaleIdProvider.notifier).set(null);
     ref.read(originalCartItemsProvider.notifier).set([]);
   }
@@ -611,6 +618,120 @@ class CartNotifier extends Notifier<List<CartItem>> {
 final cartProvider = NotifierProvider<CartNotifier, List<CartItem>>(() {
   return CartNotifier();
 });
+
+// ── Multi-Cart System ────────────────────────────────────────────────────────
+
+class MultiCartState {
+  /// Snapshots of every open cart.
+  /// The active cart's snapshot may be stale; live items are in [cartProvider].
+  final List<List<CartItem>> snapshots;
+
+  /// Display labels (1, 2, 3 …) – never reset so numbers stay unique.
+  final List<int> labels;
+
+  /// Index of the currently active cart (-1 = no carts).
+  final int activeIndex;
+
+  /// The number to assign to the next created cart.
+  final int nextLabel;
+
+  const MultiCartState({
+    required this.snapshots,
+    required this.labels,
+    required this.activeIndex,
+    required this.nextLabel,
+  });
+
+  int get count => snapshots.length;
+  bool get hasCarts => snapshots.isNotEmpty;
+
+  MultiCartState copyWith({
+    List<List<CartItem>>? snapshots,
+    List<int>? labels,
+    int? activeIndex,
+    int? nextLabel,
+  }) {
+    return MultiCartState(
+      snapshots: snapshots ?? this.snapshots,
+      labels: labels ?? this.labels,
+      activeIndex: activeIndex ?? this.activeIndex,
+      nextLabel: nextLabel ?? this.nextLabel,
+    );
+  }
+}
+
+class MultiCartNotifier extends Notifier<MultiCartState> {
+  @override
+  MultiCartState build() => const MultiCartState(
+    snapshots: [[]],
+    labels: [1],
+    activeIndex: 0,
+    nextLabel: 2,
+  );
+
+  /// Switch to cart [toIndex], saving [currentItems] for the current cart.
+  /// Returns the items that should be loaded into [cartProvider].
+  List<CartItem> switchTo(int toIndex, List<CartItem> currentItems) {
+    if (toIndex == state.activeIndex) return currentItems;
+    final updated = [...state.snapshots.map((s) => List<CartItem>.from(s))];
+    updated[state.activeIndex] = currentItems;
+    state = state.copyWith(snapshots: updated, activeIndex: toIndex);
+    return List<CartItem>.from(updated[toIndex]);
+  }
+
+  /// Create a new empty cart, saving [currentItems] first.
+  /// Returns the new cart's index.
+  int addCart(List<CartItem> currentItems) {
+    final updated = [...state.snapshots.map((s) => List<CartItem>.from(s))];
+    updated[state.activeIndex] = currentItems;
+    updated.add([]);
+    final newLabels = [...state.labels, state.nextLabel];
+    final newIndex = updated.length - 1;
+    state = state.copyWith(
+      snapshots: updated,
+      labels: newLabels,
+      activeIndex: newIndex,
+      nextLabel: state.nextLabel + 1,
+    );
+    return newIndex;
+  }
+
+  /// Remove the active cart (after checkout or when cleared).
+  /// Always keeps at least one empty cart so the UI never hits index -1.
+  /// Returns the items to load into [cartProvider].
+  List<CartItem> removeActiveCart() {
+    final updated = [...state.snapshots.map((s) => List<CartItem>.from(s))];
+    final updatedLabels = [...state.labels];
+    updated.removeAt(state.activeIndex);
+    updatedLabels.removeAt(state.activeIndex);
+
+    // Always keep a minimum of one cart
+    if (updated.isEmpty) {
+      updated.add([]);
+      updatedLabels.add(state.nextLabel);
+      state = MultiCartState(
+        snapshots: updated,
+        labels: updatedLabels,
+        activeIndex: 0,
+        nextLabel: state.nextLabel + 1,
+      );
+      return [];
+    }
+
+    final newIndex = state.activeIndex > 0 ? state.activeIndex - 1 : 0;
+    state = state.copyWith(
+      snapshots: updated,
+      labels: updatedLabels,
+      activeIndex: newIndex,
+    );
+    return List<CartItem>.from(updated[newIndex]);
+  }
+}
+
+final multiCartProvider =
+    NotifierProvider<MultiCartNotifier, MultiCartState>(() {
+      return MultiCartNotifier();
+    });
 
 final checkoutProvider = Provider((ref) => CheckoutRepository(ref));
 

@@ -59,11 +59,29 @@ class _CartSidebarState extends ConsumerState<CartSidebar> {
     final isDark = theme.brightness == Brightness.dark;
     final currencyFormatter = NumberFormat('#,##0', 'en_US');
     final editingSaleId = ref.watch(editingSaleIdProvider);
+    final multiCart = ref.watch(multiCartProvider);
 
     return GlassContainer(
       padding: const EdgeInsets.all(0),
       child: Column(
         children: [
+          // ── Cart Tabs ──────────────────────────────────────────
+          _CartTabBar(
+            multiCart: multiCart,
+            isDark: isDark,
+            onSwitch: (index) {
+              final items = ref.read(cartProvider);
+              final toLoad = ref
+                  .read(multiCartProvider.notifier)
+                  .switchTo(index, items);
+              ref.read(cartProvider.notifier).loadItems(toLoad);
+            },
+            onAdd: () {
+              final items = ref.read(cartProvider);
+              ref.read(multiCartProvider.notifier).addCart(items);
+              ref.read(cartProvider.notifier).loadItems([]);
+            },
+          ),
           Padding(
             padding: const EdgeInsets.all(20.0),
             child: Row(
@@ -852,7 +870,147 @@ class _LinkedProductsSection extends ConsumerWidget {
         );
       },
       loading: () => const SizedBox.shrink(),
-      error: (_, __) => const SizedBox.shrink(),
+      error: (e, _) => const SizedBox.shrink(),
+    );
+  }
+}
+
+// ── Cart Tab Bar ─────────────────────────────────────────────────────────────
+
+class _CartTabBar extends StatelessWidget {
+  final MultiCartState multiCart;
+  final bool isDark;
+  final void Function(int index) onSwitch;
+  final VoidCallback onAdd;
+
+  const _CartTabBar({
+    required this.multiCart,
+    required this.isDark,
+    required this.onSwitch,
+    required this.onAdd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // No carts → show only the add button
+    if (!multiCart.hasCarts) {
+      return _buildBar(context, children: [_addButton(context)]);
+    }
+
+    return _buildBar(
+      context,
+      children: [
+        // One tab per open cart
+        ...List.generate(multiCart.count, (i) {
+          final isActive = i == multiCart.activeIndex;
+          final label = multiCart.labels[i];
+          return GestureDetector(
+            onTap: isActive ? null : () => onSwitch(i),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: isActive
+                    ? AppColors.primary
+                    : (isDark
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.black.withValues(alpha: 0.06)),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: isActive
+                      ? AppColors.primary
+                      : Colors.transparent,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    PhosphorIconsFill.shoppingCart,
+                    size: 13,
+                    color: isActive ? AppColors.secondary : Colors.grey,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    '$label',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: isActive ? AppColors.secondary : Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+        _addButton(context),
+      ],
+    );
+  }
+
+  Widget _buildBar(BuildContext context, {required List<Widget> children}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.06),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              child: Row(
+                children: [
+                  for (int i = 0; i < children.length - 1; i++) ...[
+                    children[i],
+                    const SizedBox(width: 6),
+                  ],
+                  children.last,
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addButton(BuildContext context) {
+    return GestureDetector(
+      onTap: onAdd,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: AppColors.primary.withValues(alpha: 0.4),
+          ),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(PhosphorIconsBold.plus, size: 13, color: AppColors.primary),
+            SizedBox(width: 4),
+            Text(
+              'سلة جديدة',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
