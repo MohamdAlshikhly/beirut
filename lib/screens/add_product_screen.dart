@@ -75,27 +75,27 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
         : 0.0;
 
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يرجى إدخال اسم المنتج')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('يرجى إدخال اسم المنتج')));
       return;
     }
     if (price == null || price < 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يرجى إدخال سعر صحيح')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('يرجى إدخال سعر صحيح')));
       return;
     }
     if (costPrice == null && _costPriceController.text.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('سعر التكلفة غير صحيح')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('سعر التكلفة غير صحيح')));
       return;
     }
     if (qty == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الكمية غير صحيحة')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('الكمية غير صحيحة')));
       return;
     }
 
@@ -188,10 +188,11 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
       }
     } catch (e) {
       debugPrint('Error: $e');
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('حدث خطأ: $e'), backgroundColor: Colors.red),
         );
+      }
     }
     if (mounted) setState(() => _isLoading = false);
   }
@@ -309,7 +310,10 @@ class _AddProductScreenState extends ConsumerState<AddProductScreen> {
                       'يتيح إضافة كروت بقيم مختلفة من إدارة الكروت',
                       style: TextStyle(fontSize: 12),
                     ),
-                    secondary: const Icon(Icons.credit_card, color: AppColors.primary),
+                    secondary: const Icon(
+                      Icons.credit_card,
+                      color: AppColors.primary,
+                    ),
                     activeThumbColor: AppColors.primary,
                     contentPadding: EdgeInsets.zero,
                   ),

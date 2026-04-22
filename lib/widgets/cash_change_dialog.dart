@@ -90,6 +90,30 @@ class _CashChangeDialogState extends State<_CashChangeDialog> {
             ? Colors.green
             : Colors.red;
 
+    return CallbackShortcuts(
+      bindings: {
+        // Enter is handled by the TextField's onSubmitted (= إتمام بدون طباعة).
+        // F12 is an explicit shortcut for printing; Esc cancels the dialog.
+        const SingleActivator(LogicalKeyboardKey.f12): () =>
+            Navigator.pop(context, 'print'),
+        const SingleActivator(LogicalKeyboardKey.escape): () =>
+            Navigator.pop(context, null),
+      },
+      child: Focus(
+        autofocus: true,
+        child: _buildDialog(fmt, change, isEnough, hasInput, changeColor, isDark),
+      ),
+    );
+  }
+
+  Widget _buildDialog(
+    NumberFormat fmt,
+    double change,
+    bool isEnough,
+    bool hasInput,
+    Color changeColor,
+    bool isDark,
+  ) {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Row(
@@ -172,9 +196,10 @@ class _CashChangeDialogState extends State<_CashChangeDialog> {
                   borderSide: const BorderSide(color: AppColors.primary, width: 2),
                 ),
               ),
-              onSubmitted: (_) {
-                if (isEnough) Navigator.pop(context, 'print');
-              },
+              // Pressing Enter here completes the sale WITHOUT printing.
+              // The paid amount is optional — empty input is valid; cashier
+              // only fills it in when they want the change calculation.
+              onSubmitted: (_) => Navigator.pop(context, 'no_print'),
             ),
 
             const SizedBox(height: 14),
@@ -268,29 +293,25 @@ class _CashChangeDialogState extends State<_CashChangeDialog> {
           child: const Text('إلغاء (Esc)'),
         ),
         const SizedBox(width: 4),
+        // Print is now an explicit action — not the Enter default. The paid
+        // amount is optional; the buttons stay enabled even with no input.
         ElevatedButton.icon(
-          onPressed: (isEnough || !hasInput)
-              ? () => Navigator.pop(context, 'no_print')
-              : null,
+          onPressed: () => Navigator.pop(context, 'print'),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.secondary,
             foregroundColor: Colors.white,
-            disabledBackgroundColor: Colors.grey.shade300,
           ),
-          icon: const Icon(PhosphorIconsRegular.check, size: 18),
-          label: const Text('إتمام فقط (F12)'),
+          icon: const Icon(PhosphorIconsRegular.printer, size: 18),
+          label: const Text('إتمام وطباعة (F12)'),
         ),
         ElevatedButton.icon(
-          onPressed: (isEnough || !hasInput)
-              ? () => Navigator.pop(context, 'print')
-              : null,
+          onPressed: () => Navigator.pop(context, 'no_print'),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primary,
             foregroundColor: AppColors.secondary,
-            disabledBackgroundColor: Colors.grey.shade300,
           ),
-          icon: const Icon(PhosphorIconsRegular.printer, size: 18),
-          label: const Text('إتمام وطباعة (Enter)'),
+          icon: const Icon(PhosphorIconsRegular.check, size: 18),
+          label: const Text('إتمام (Enter)'),
         ),
       ],
     );

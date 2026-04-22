@@ -91,157 +91,204 @@ class SyncService {
         .subscribe();
   }
 
+  /// Fetches every row from [table] by paginating with `.range()`. Supabase's
+  /// default PostgREST max_rows is 1000, so `.limit(N)` caps at 1000 on the
+  /// server regardless of the client value. Pagination is the only way to
+  /// retrieve more.
+  Future<List<Map<String, dynamic>>> _fetchAllRows(
+    String table, {
+    int pageSize = 1000,
+  }) async {
+    final List<Map<String, dynamic>> all = [];
+    int from = 0;
+    while (true) {
+      final chunk = await _supabase
+          .from(table)
+          .select()
+          .order('id', ascending: true)
+          .range(from, from + pageSize - 1);
+      if (chunk.isEmpty) break;
+      all.addAll(List<Map<String, dynamic>>.from(chunk));
+      if (chunk.length < pageSize) break;
+      from += pageSize;
+    }
+    return all;
+  }
+
   Future<void> syncDown() async {
     try {
       final db = await LocalDatabase.instance.database;
 
-      // Sync Categories
-      final categories = await _supabase.from('categories').select();
-      for (var cat in categories) {
-        cat['is_synced'] = 1;
-        await db.insert(
-          'categories',
-          cat,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+      // ── Categories ──
+      final categories = await _fetchAllRows('categories');
+      await db.transaction((txn) async {
+        for (var cat in categories) {
+          cat['is_synced'] = 1;
+          await txn.insert(
+            'categories',
+            cat,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      });
+
+      // ── Products (Smart Reconciliation, batched) ──
+      // Paginate: Supabase's PostgREST default caps a single query at 1000
+      // rows regardless of .limit(), so >1000 products were silently dropped.
+      final products = await _fetchAllRows('products');
+
+      // Preload local state in bulk to avoid N+1 queries on mobile.
+      final localProdRows = await db.query(
+        'products',
+        columns: ['id', 'is_synced', 'image_url'],
+      );
+      final localProdMap = <int, Map<String, Object?>>{
+        for (var r in localProdRows) r['id'] as int: r,
+      };
+
+      final unsyncedMovementRows = await db.query(
+        'stock_movements',
+        columns: ['product_id', 'change'],
+        where: 'is_synced = 0',
+      );
+      final unsyncedAdjustMap = <int, double>{};
+      for (var m in unsyncedMovementRows) {
+        final pid = m['product_id'] as int?;
+        if (pid == null) continue;
+        unsyncedAdjustMap[pid] =
+            (unsyncedAdjustMap[pid] ?? 0) + (m['change'] as num).toDouble();
       }
 
-      // Sync Products (Smart Reconciliation: Remote + Unsynced Local Adjustments)
-      final products = await _supabase.from('products').select();
-      for (var prod in products) {
-        final localProdRes = await db.query(
-          'products',
-          where: 'id = ?',
-          whereArgs: [prod['id']],
-        );
+      // FK off: categories/base_unit may not all be local yet.
+      await db.execute('PRAGMA foreign_keys = OFF');
+      try {
+        await db.transaction((txn) async {
+          for (var prod in products) {
+            final pid = prod['id'] as int;
+            final remoteQty = (prod['quantity'] as num?)?.toDouble() ?? 0.0;
+            final reconciledQty = remoteQty + (unsyncedAdjustMap[pid] ?? 0);
 
-        // 1. Calculate sum of all local adjustments not yet synced
-        double unsyncedAdjust = 0;
-        final unsyncedMovements = await db.query(
-          'stock_movements',
-          where: 'product_id = ? AND is_synced = 0',
-          whereArgs: [prod['id']],
-        );
-        for (var mov in unsyncedMovements) {
-          unsyncedAdjust += (mov['change'] as num).toDouble();
-        }
-
-        final remoteQty = (prod['quantity'] as num?)?.toDouble() ?? 0.0;
-        final reconciledQty = remoteQty + unsyncedAdjust;
-
-        if (localProdRes.isNotEmpty) {
-          final localProd = localProdRes.first;
-          if (localProd['is_synced'] == 0) {
-            // Product has pending local edits (price, name, etc.)
-            // We update quantity AND image_url to handle global changes
-            final updatedMap = Map<String, dynamic>.from(localProd);
-            updatedMap['quantity'] = reconciledQty;
-            // Always take the remote image if the local one is null
-            if (updatedMap['image_url'] == null ||
-                updatedMap['image_url'].toString().isEmpty) {
-              updatedMap['image_url'] = prod['image_url'];
+            final local = localProdMap[pid];
+            if (local != null && local['is_synced'] == 0) {
+              // Preserve pending local edits (price, name, etc.); only
+              // refresh quantity and image if local lacks one.
+              final updateMap = <String, dynamic>{'quantity': reconciledQty};
+              final localImg = local['image_url'] as String?;
+              if (localImg == null || localImg.isEmpty) {
+                updateMap['image_url'] = prod['image_url'];
+              }
+              await txn.update(
+                'products',
+                updateMap,
+                where: 'id = ?',
+                whereArgs: [pid],
+              );
+              continue;
             }
-            await db.update(
+
+            final row = Map<String, dynamic>.from(prod);
+            row['quantity'] = reconciledQty;
+            row['is_synced'] = 1;
+            await txn.insert(
               'products',
-              updatedMap,
-              where: 'id = ?',
-              whereArgs: [prod['id']],
-            );
-            continue;
-          }
-        }
-
-        // Default: Update local with remote data but reconciled quantity
-        prod['quantity'] = reconciledQty;
-        prod['is_synced'] = 1;
-        await db.insert(
-          'products',
-          prod,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      }
-
-      // Sync Users
-      final users = await _supabase.from('users').select();
-      for (var user in users) {
-        await db.insert(
-          'users',
-          user,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      }
-
-      // Sync Balance Down
-      final remoteBalRes = await _supabase
-          .from('balance')
-          .select()
-          .order('id', ascending: false)
-          .limit(1);
-
-      if (remoteBalRes.isNotEmpty) {
-        final remoteBal = remoteBalRes.first;
-        final localBalRes = await db.query('balance', limit: 1);
-        if (localBalRes.isNotEmpty) {
-          final localBal = localBalRes.first;
-          if (localBal['is_synced'] == 1) {
-            // Only update if local version is already synced
-            await db.update(
-              'balance',
-              {'currentBalance': remoteBal['currentBalance'], 'is_synced': 1},
-              where: 'id = ?',
-              whereArgs: [localBal['id']],
+              row,
+              conflictAlgorithm: ConflictAlgorithm.replace,
             );
           }
-        } else {
-          // Local balance is empty, insert first record
-          await db.insert('balance', {
-            'currentBalance': remoteBal['currentBalance'],
-            'is_synced': 1,
-          });
-        }
+        });
+      } finally {
+        await db.execute('PRAGMA foreign_keys = ON');
       }
 
-      // Sync Recent Sales (Last 100 to show on mobile history/dashboard)
+      // ── Users ──
+      final users = await _supabase.from('users').select().limit(1000);
+      await db.transaction((txn) async {
+        for (var user in users) {
+          await txn.insert(
+            'users',
+            user,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+      });
+
+      // ── Balance ── (single-row variable pinned at id=1, two columns)
+      // Only mirror remote → local if there are no pending local changes
+      // (is_synced=0 means the local value hasn't been pushed up yet).
+      final localBalRow = await db.query(
+        'balance',
+        columns: ['is_synced'],
+        where: 'id = 1',
+        limit: 1,
+      );
+      final pendingLocal =
+          localBalRow.isNotEmpty && (localBalRow.first['is_synced'] == 0);
+      if (!pendingLocal) {
+        final remoteCash = await BalanceRepo.getRemote(_supabase);
+        final remoteCard = await BalanceRepo.getCardRemote(_supabase);
+        await BalanceRepo.setLocal(db, remoteCash, isSynced: true);
+        await BalanceRepo.setCardLocal(db, remoteCard, isSynced: true);
+      }
+
+      // ── Recent Sales (last 100) and their items, fetched in one query ──
       final remoteSales = await _supabase
           .from('sales')
           .select()
           .order('created_at', ascending: false)
           .limit(100);
 
-      for (var sale in remoteSales) {
-        sale['is_synced'] = 1;
-        await db.insert(
-          'sales',
-          sale,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-
-        // Fetch and sync sale items for these sales
-        final remoteItems = await _supabase
+      final saleIds = remoteSales.map((s) => s['id']).toList();
+      List<dynamic> remoteItems = [];
+      if (saleIds.isNotEmpty) {
+        remoteItems = await _supabase
             .from('sale_items')
             .select()
-            .eq('sale_id', sale['id']);
-        for (var item in remoteItems) {
-          await db.insert(
-            'sale_items',
-            item,
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
+            .inFilter('sale_id', saleIds);
       }
 
-      // Sync Cards
-      final remoteCards = await _supabase.from('cards').select();
-      for (var card in remoteCards) {
-        await db.execute('PRAGMA foreign_keys = OFF');
-        await db.insert('cards', {
-          'id': card['id'],
-          'name': card['name'],
-          'product_id': card['productId'],
-          'price': (card['price'] as num?)?.toInt() ?? 0,
-          'spended_balance': (card['spended_balance'] as num?)?.toInt() ?? 0,
-          'created_at': card['created_at'],
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      // FK off: some referenced products may not have synced locally yet
+      // (e.g. product deleted remotely, or partial previous sync).
+      await db.execute('PRAGMA foreign_keys = OFF');
+      try {
+        await db.transaction((txn) async {
+          for (var sale in remoteSales) {
+            sale['is_synced'] = 1;
+            await txn.insert(
+              'sales',
+              sale,
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
+          for (var item in remoteItems) {
+            await txn.insert(
+              'sale_items',
+              item,
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
+        });
+      } finally {
+        await db.execute('PRAGMA foreign_keys = ON');
+      }
+
+      // ── Cards ──
+      final remoteCards = await _fetchAllRows('cards');
+      await db.execute('PRAGMA foreign_keys = OFF');
+      try {
+        await db.transaction((txn) async {
+          for (var card in remoteCards) {
+            await txn.insert('cards', {
+              'id': card['id'],
+              'name': card['name'],
+              'product_id': card['productId'],
+              'price': (card['price'] as num?)?.toInt() ?? 0,
+              'spended_balance':
+                  (card['spended_balance'] as num?)?.toInt() ?? 0,
+              'created_at': card['created_at'],
+            }, conflictAlgorithm: ConflictAlgorithm.replace);
+          }
+        });
+      } finally {
         await db.execute('PRAGMA foreign_keys = ON');
       }
 
@@ -302,25 +349,19 @@ class SyncService {
             whereArgs: [localSaleId],
           );
 
-          // If cash sale, update remote balance (Stateless Reconciliation)
-          if (saleMap['payment_type'] == 'cash') {
-            try {
-              final totalPriceNum = saleMap['total_price'] as num;
-              final remoteBalRes = await _supabase
-                  .from('balance')
-                  .select()
-                  .order('id', ascending: false)
-                  .limit(1)
-                  .maybeSingle();
-              final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
-              await _supabase.from('balance').insert({
-                'currentBalance': currentBal + totalPriceNum.toInt(),
-              });
-            } catch (balErr) {
-              debugPrint(
-                '⚠️ Error updating remote balance during syncUp: $balErr',
-              );
+          // Cash → drawer; Card → card accumulator. Card money never
+          // touches the drawer; cash never touches the card variable.
+          final totalPriceNum = saleMap['total_price'] as num;
+          try {
+            if (saleMap['payment_type'] == 'cash') {
+              await BalanceRepo.addRemote(_supabase, totalPriceNum.toInt());
+            } else if (saleMap['payment_type'] == 'card') {
+              await BalanceRepo.addCardRemote(_supabase, totalPriceNum.toInt());
             }
+          } catch (balErr) {
+            debugPrint(
+              '⚠️ Error updating remote balance during syncUp: $balErr',
+            );
           }
         } else {
           // ── Crash recovery: sale already uploaded, skip insert & balance ──
@@ -444,38 +485,25 @@ class SyncService {
         }
       }
 
-      // 4. Sync Balance
+      // 4. Sync Balance — push pending local value into the single remote row.
       final unsyncedBalance = await db.query(
         'balance',
-        where: 'is_synced = ?',
-        whereArgs: [0],
+        where: 'is_synced = 0',
+        limit: 1,
       );
-      for (var bal in unsyncedBalance) {
-        final balMap = Map<String, dynamic>.from(bal);
-        final localId = balMap['id'];
-        balMap.remove('id');
-        balMap.remove('is_synced');
-
-        // Check if there's an existing balance record on Supabase (usually just 1)
-        final remoteBalRes = await _supabase
-            .from('balance')
-            .select()
-            .order('id', ascending: false)
-            .limit(1);
-
-        if (remoteBalRes.isNotEmpty) {
-          final remoteId = remoteBalRes.first['id'];
-          await _supabase.from('balance').update(balMap).eq('id', remoteId);
-        } else {
-          await _supabase.from('balance').insert(balMap);
+      if (unsyncedBalance.isNotEmpty) {
+        final localVal =
+            (unsyncedBalance.first['currentBalance'] as int?) ?? 0;
+        try {
+          await BalanceRepo.setRemote(_supabase, localVal);
+          await db.update(
+            'balance',
+            {'is_synced': 1},
+            where: 'id = 1',
+          );
+        } catch (e) {
+          debugPrint('⚠️ Failed to push balance remotely: $e');
         }
-
-        await db.update(
-          'balance',
-          {'is_synced': 1},
-          where: 'id = ?',
-          whereArgs: [localId],
-        );
       }
 
       debugPrint('✅ Sync Up Completed');

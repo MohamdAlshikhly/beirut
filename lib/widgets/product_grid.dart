@@ -29,6 +29,14 @@ class ProductGrid extends ConsumerStatefulWidget {
 }
 
 class _ProductGridState extends ConsumerState<ProductGrid> {
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final productsAsync = ref.watch(productsProvider);
@@ -47,11 +55,22 @@ class _ProductGridState extends ConsumerState<ProductGrid> {
               Expanded(
                 flex: 1,
                 child: TextField(
+                  controller: _searchController,
                   decoration: InputDecoration(
                     hintText: 'ابحث عن منتج بالاسم أو الباركود...',
                     prefixIcon: const Icon(
                       PhosphorIconsRegular.magnifyingGlass,
                     ),
+                    suffixIcon: searchQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(PhosphorIconsRegular.x, size: 18),
+                            tooltip: 'مسح البحث',
+                            onPressed: () {
+                              _searchController.clear();
+                              ref.read(searchQueryProvider.notifier).set('');
+                            },
+                          ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide.none,

@@ -152,6 +152,170 @@ final dbUpdateTriggerProvider = NotifierProvider<DbUpdateTrigger, int>(() {
   return DbUpdateTrigger();
 });
 
+/// Centralized read/write helper for the two cash-drawer / card balances.
+/// The balance table is a single-row variable pinned at id=1:
+///   - `currentBalance` → physical cash drawer.
+///   - `cardBalance`    → accumulated card-payment revenue.
+/// Every mutation upserts the same row rather than inserting history, and
+/// card sales only ever touch `cardBalance` (drawer untouched).
+class BalanceRepo {
+  static const int _rowId = 1;
+  static const String _kCash = 'currentBalance';
+  static const String _kCard = 'cardBalance';
+
+  // ── Cash (drawer) ───────────────────────────────────────────────────────
+  static Future<int> getRemote(SupabaseClient supabase) =>
+      _getRemoteCol(supabase, _kCash);
+  static Future<void> setRemote(SupabaseClient supabase, int value) =>
+      _setRemoteCol(supabase, _kCash, value);
+  static Future<void> addRemote(SupabaseClient supabase, int delta) =>
+      _addRemoteCol(supabase, _kCash, delta);
+  static Future<int> getLocal(Database db) => _getLocalCol(db, _kCash);
+  static Future<void> setLocal(Database db, int value,
+          {required bool isSynced}) =>
+      _setLocalCol(db, _kCash, value, isSynced: isSynced);
+  static Future<void> addLocal(Database db, int delta,
+          {required bool isSynced}) =>
+      _addLocalCol(db, _kCash, delta, isSynced: isSynced);
+
+  // ── Card (processor revenue) ────────────────────────────────────────────
+  static Future<int> getCardRemote(SupabaseClient supabase) =>
+      _getRemoteCol(supabase, _kCard);
+  static Future<void> setCardRemote(SupabaseClient supabase, int value) =>
+      _setRemoteCol(supabase, _kCard, value);
+  static Future<void> addCardRemote(SupabaseClient supabase, int delta) =>
+      _addRemoteCol(supabase, _kCard, delta);
+  static Future<int> getCardLocal(Database db) => _getLocalCol(db, _kCard);
+  static Future<void> setCardLocal(Database db, int value,
+          {required bool isSynced}) =>
+      _setLocalCol(db, _kCard, value, isSynced: isSynced);
+  static Future<void> addCardLocal(Database db, int delta,
+          {required bool isSynced}) =>
+      _addLocalCol(db, _kCard, delta, isSynced: isSynced);
+
+  // ── Shared implementation ───────────────────────────────────────────────
+  static Future<int> _getRemoteCol(
+      SupabaseClient supabase, String column) async {
+    try {
+      final res = await supabase
+          .from('balance')
+          .select(column)
+          .eq('id', _rowId)
+          .maybeSingle();
+      if (res != null) return (res[column] as num?)?.toInt() ?? 0;
+      // Legacy fallback: older schemas with id != 1 — use the latest row.
+      final fallback = await supabase
+          .from('balance')
+          .select(column)
+          .order('id', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      return (fallback?[column] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  static Future<void> _setRemoteCol(
+      SupabaseClient supabase, String column, int value) async {
+    await supabase
+        .from('balance')
+        .upsert({'id': _rowId, column: value});
+  }
+
+  static Future<void> _addRemoteCol(
+      SupabaseClient supabase, String column, int delta) async {
+    if (delta == 0) return;
+    final current = await _getRemoteCol(supabase, column);
+    await _setRemoteCol(supabase, column, current + delta);
+  }
+
+  static Future<int> _getLocalCol(Database db, String column) async {
+    final rows = await db.query(
+      'balance',
+      columns: [column],
+      where: 'id = ?',
+      whereArgs: [_rowId],
+      limit: 1,
+    );
+    if (rows.isNotEmpty) return (rows.first[column] as int?) ?? 0;
+    final any = await db.query(
+      'balance',
+      columns: [column],
+      orderBy: 'id DESC',
+      limit: 1,
+    );
+    return any.isEmpty ? 0 : ((any.first[column] as int?) ?? 0);
+  }
+
+  static Future<void> _setLocalCol(
+    Database db,
+    String column,
+    int value, {
+    required bool isSynced,
+  }) async {
+    // UPDATE-or-INSERT so we only touch the specified column and never
+    // clobber the other balance field (cash / card are independent).
+    final exists = await db.query(
+      'balance',
+      columns: ['id'],
+      where: 'id = ?',
+      whereArgs: [_rowId],
+      limit: 1,
+    );
+    if (exists.isNotEmpty) {
+      await db.update(
+        'balance',
+        {column: value, 'is_synced': isSynced ? 1 : 0},
+        where: 'id = ?',
+        whereArgs: [_rowId],
+      );
+    } else {
+      await db.insert('balance', {
+        'id': _rowId,
+        column: value,
+        'is_synced': isSynced ? 1 : 0,
+      });
+    }
+  }
+
+  static Future<void> _addLocalCol(
+    Database db,
+    String column,
+    int delta, {
+    required bool isSynced,
+  }) async {
+    if (delta == 0) return;
+    final current = await _getLocalCol(db, column);
+    await _setLocalCol(db, column, current + delta, isSynced: isSynced);
+  }
+}
+
+/// Fetches every row from [table] by paginating with `.range()`. Supabase's
+/// default PostgREST max_rows is 1000, so `.limit(N)` caps at 1000 on the
+/// server regardless of the client value. Pagination is the only way to
+/// retrieve more.
+Future<List<Map<String, dynamic>>> _fetchAllRows(
+  SupabaseClient supabase,
+  String table, {
+  int pageSize = 1000,
+}) async {
+  final List<Map<String, dynamic>> all = [];
+  int from = 0;
+  while (true) {
+    final chunk = await supabase
+        .from(table)
+        .select()
+        .order('id', ascending: true)
+        .range(from, from + pageSize - 1);
+    if (chunk.isEmpty) break;
+    all.addAll(List<Map<String, dynamic>>.from(chunk));
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 Future<void> _mirrorCategoriesToLocal(List<Map<String, dynamic>> data) async {
   try {
     final db = await LocalDatabase.instance.database;
@@ -214,11 +378,12 @@ final balanceProvider = StreamProvider<int>((ref) {
       (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
   if (isOnline && isDesktop) {
+    // Single-row variable pinned at id=1 — stream just that row so remote
+    // updates push down instantly without legacy history noise.
     return supabase
         .from('balance')
         .stream(primaryKey: ['id'])
-        .order('id', ascending: false)
-        .limit(1)
+        .eq('id', 1)
         .map((data) =>
             data.isEmpty ? 0 : (data.first['currentBalance'] as int? ?? 0));
   }
@@ -228,30 +393,24 @@ final balanceProvider = StreamProvider<int>((ref) {
   return (() async* {
     try {
       if (isOnline) {
-        final response = await supabase
-            .from('balance')
-            .select('currentBalance')
-            .order('id', ascending: false)
-            .limit(1)
-            .maybeSingle()
+        final value = await BalanceRepo.getRemote(supabase)
             .timeout(const Duration(seconds: 5));
-
-        yield response?['currentBalance'] as int? ?? 0;
+        yield value;
         return;
       }
       throw Exception('Offline');
     } catch (e) {
       debugPrint('Balance fetch failed/offline: $e');
       final db = await LocalDatabase.instance.database;
-      final response = await db.query('balance', orderBy: 'id DESC', limit: 1);
-      yield response.isEmpty
-          ? 0
-          : response.first['currentBalance'] as int? ?? 0;
+      yield await BalanceRepo.getLocal(db);
     }
   })();
 });
 
-final categoriesProvider = StreamProvider<List<Category>>((ref) {
+/// Accumulated card-payment revenue. Stored on the same single-row
+/// balance record as the drawer balance (column `cardBalance`) so card
+/// sales never touch the drawer and vice versa.
+final cardBalanceProvider = StreamProvider<int>((ref) {
   final supabase = ref.read(supabaseProvider);
   final isOnline = ref.watch(isOnlineProvider);
   final isDesktop = !kIsWeb &&
@@ -259,12 +418,11 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
 
   if (isOnline && isDesktop) {
     return supabase
-        .from('categories')
+        .from('balance')
         .stream(primaryKey: ['id'])
-        .map((data) {
-          _mirrorCategoriesToLocal(data);
-          return data.map((json) => Category.fromJson(json)).toList();
-        });
+        .eq('id', 1)
+        .map((data) =>
+            data.isEmpty ? 0 : (data.first['cardBalance'] as int? ?? 0));
   }
 
   ref.watch(dbUpdateTriggerProvider);
@@ -272,14 +430,59 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
   return (() async* {
     try {
       if (isOnline) {
-        final response = await supabase
-            .from('categories')
-            .select()
+        final value = await BalanceRepo.getCardRemote(supabase)
             .timeout(const Duration(seconds: 5));
+        yield value;
+        return;
+      }
+      throw Exception('Offline');
+    } catch (e) {
+      debugPrint('Card balance fetch failed/offline: $e');
+      final db = await LocalDatabase.instance.database;
+      yield await BalanceRepo.getCardLocal(db);
+    }
+  })();
+});
+
+/// Subscribes to realtime changes on [table] and bumps the global trigger on
+/// any change, causing providers that depend on it to re-fetch. Replaces the
+/// previous `.stream()` approach, which silently capped at the server's
+/// max_rows (1000) regardless of client-side `.limit()`.
+void _watchTableForRefresh(Ref ref, String table, String channelName) {
+  final supabase = ref.read(supabaseProvider);
+  final isDesktop = !kIsWeb &&
+      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+  if (!isDesktop) return;
+
+  final channel = supabase.channel(channelName);
+  channel
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: table,
+        callback: (_) {
+          ref.read(dbUpdateTriggerProvider.notifier).trigger();
+        },
+      )
+      .subscribe();
+  ref.onDispose(() => channel.unsubscribe());
+}
+
+final categoriesProvider = StreamProvider<List<Category>>((ref) {
+  final supabase = ref.read(supabaseProvider);
+  final isOnline = ref.watch(isOnlineProvider);
+  ref.watch(dbUpdateTriggerProvider);
+
+  return (() async* {
+    try {
+      if (isOnline) {
+        final response = await _fetchAllRows(supabase, 'categories')
+            .timeout(const Duration(seconds: 20));
         final categories =
             response.map((json) => Category.fromJson(json)).toList();
         _mirrorCategoriesToLocal(response);
         yield categories;
+        _watchTableForRefresh(ref, 'categories', 'categories_auto_refresh');
         return;
       }
       throw Exception('Offline');
@@ -295,32 +498,18 @@ final categoriesProvider = StreamProvider<List<Category>>((ref) {
 final productsProvider = StreamProvider<List<Product>>((ref) {
   final supabase = ref.read(supabaseProvider);
   final isOnline = ref.watch(isOnlineProvider);
-  final isDesktop = !kIsWeb &&
-      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
-
-  if (isOnline && isDesktop) {
-    return supabase
-        .from('products')
-        .stream(primaryKey: ['id'])
-        .map((data) {
-          _mirrorProductsToLocal(data);
-          return data.map((json) => Product.fromJson(json)).toList();
-        });
-  }
-
   ref.watch(dbUpdateTriggerProvider);
 
   return (() async* {
     try {
       if (isOnline) {
-        final response = await supabase
-            .from('products')
-            .select()
-            .timeout(const Duration(seconds: 5));
+        final response = await _fetchAllRows(supabase, 'products')
+            .timeout(const Duration(seconds: 30));
         final products =
             response.map((json) => Product.fromJson(json)).toList();
         _mirrorProductsToLocal(response);
         yield products;
+        _watchTableForRefresh(ref, 'products', 'products_auto_refresh');
         return;
       }
       throw Exception('Offline');
@@ -829,27 +1018,7 @@ class CheckoutRepository {
   }
 
   Future<void> _updateDrawerBalance(Database db, double amountChange) async {
-    final res = await db.query('balance', orderBy: 'id DESC', limit: 1);
-    int currentBal = 0;
-    int? id;
-    if (res.isNotEmpty) {
-      currentBal = res.first['currentBalance'] as int? ?? 0;
-      id = res.first['id'] as int;
-    }
-    currentBal += amountChange.toInt();
-    if (id == null) {
-      await db.insert('balance', {
-        'currentBalance': currentBal,
-        'is_synced': 0,
-      });
-    } else {
-      await db.update(
-        'balance',
-        {'currentBalance': currentBal, 'is_synced': 0},
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-    }
+    await BalanceRepo.addLocal(db, amountChange.toInt(), isSynced: false);
     ref.invalidate(balanceProvider);
   }
 
@@ -896,7 +1065,10 @@ class CheckoutRepository {
           );
         }
 
-        // 3. Open cash drawer physically + log locally as unsynced
+        // 3. Open cash drawer physically + log locally as unsynced.
+        //    Card sales never open the drawer — the money is on the card
+        //    processor side — but we still add to the local cardBalance
+        //    mirror here so the dashboard updates instantly.
         if (paymentType == 'cash') {
           try {
             await ref.read(printingServiceProvider).openCashDrawer();
@@ -913,6 +1085,12 @@ class CheckoutRepository {
               'is_synced': 0,
             });
           } catch (_) {}
+        } else if (paymentType == 'card') {
+          try {
+            await BalanceRepo.addCardLocal(db, total.toInt(), isSynced: false);
+          } catch (e) {
+            debugPrint('Local card balance update failed: $e');
+          }
         }
 
         // 4. Clear cart & refresh UI immediately
@@ -977,14 +1155,22 @@ class CheckoutRepository {
         );
       }
 
-      // 4. Update Balance and Log (Online)
+      // 4. Update Balance and Log (Online) — cash into drawer, card into
+      //    the separate cardBalance variable.
       if (paymentType == 'cash') {
-        // Centralized call to logAndOpen which handles balance update
         await ref.read(cashDrawerProvider).logAndOpen(
-          type: 'open',
-          reason: 'بيع في فاتورة #$saleId (تلقائي)',
-          amount: total,
-        );
+              type: 'open',
+              reason: 'بيع في فاتورة #$saleId (تلقائي)',
+              amount: total,
+            );
+      } else if (paymentType == 'card') {
+        try {
+          await BalanceRepo.addCardRemote(supabase, total.toInt());
+          await BalanceRepo.addCardLocal(db, total.toInt(), isSynced: true);
+        } catch (e) {
+          debugPrint('Online card balance update failed: $e');
+          await BalanceRepo.addCardLocal(db, total.toInt(), isSynced: false);
+        }
       }
 
       // 5. Update Local DB for sync consistency using the remote saleId
@@ -1099,18 +1285,11 @@ class CheckoutRepository {
       final oldTotal = (existingSale['total_price'] as num).toDouble();
       final oldPaymentType = existingSale['payment_type'] as String;
 
-      // 2. Adjust Balance (Online)
+      // 2. Reverse the old payment from its corresponding balance variable.
       if (oldPaymentType == 'cash') {
-        final remoteBalRes = await supabase
-            .from('balance')
-            .select()
-            .order('id', ascending: false)
-            .limit(1)
-            .maybeSingle();
-        final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
-        await supabase.from('balance').insert({
-          'currentBalance': currentBal - oldTotal.toInt(),
-        });
+        await BalanceRepo.addRemote(supabase, -oldTotal.toInt());
+      } else if (oldPaymentType == 'card') {
+        await BalanceRepo.addCardRemote(supabase, -oldTotal.toInt());
       }
 
       // 3. Update Sale (Online)
@@ -1119,17 +1298,13 @@ class CheckoutRepository {
           .update({'total_price': total, 'payment_type': paymentType})
           .eq('id', saleId);
 
+      // Apply the new total to the correct balance — cash → drawer,
+      // card → card accumulator. Card payments never touch the drawer
+      // and cash never touches the card balance.
       if (paymentType == 'cash') {
-        final lastBalRes = await supabase
-            .from('balance')
-            .select()
-            .order('id', ascending: false)
-            .limit(1)
-            .maybeSingle();
-        final lastBal = lastBalRes?['currentBalance'] as int? ?? 0;
-        await supabase.from('balance').insert({
-          'currentBalance': lastBal + total.toInt(),
-        });
+        await BalanceRepo.addRemote(supabase, total.toInt());
+      } else if (paymentType == 'card') {
+        await BalanceRepo.addCardRemote(supabase, total.toInt());
       }
 
       // 4. Update Items (Delete and Re-insert for Online Simplicity)
@@ -1320,17 +1495,12 @@ class CheckoutRepository {
       final total = (existingSale['total_price'] as num).toDouble();
       final paymentType = existingSale['payment_type'] as String;
 
+      // Revert the balance on the side the sale actually touched:
+      // cash → drawer, card → cardBalance accumulator.
       if (paymentType == 'cash') {
-        final remoteBalRes = await supabase
-            .from('balance')
-            .select()
-            .order('id', ascending: false)
-            .limit(1)
-            .maybeSingle();
-        final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
-        await supabase.from('balance').insert({
-          'currentBalance': currentBal - total.toInt(),
-        });
+        await BalanceRepo.addRemote(supabase, -total.toInt());
+      } else if (paymentType == 'card') {
+        await BalanceRepo.addCardRemote(supabase, -total.toInt());
       }
 
       final items = await supabase
@@ -1566,39 +1736,18 @@ class CashDrawerRepository {
       'created_at': DateTime.now().toUtc().toIso8601String(),
     };
 
+    bool onlineLogged = false;
     if (isOnline) {
       try {
-        // Create a copy of the log map for Supabase
-        final onlineLogMap = Map<String, dynamic>.from(logMap);
-        
-        // Use the custom user_id (bigint) instead of auth UUID
-        onlineLogMap['user_id'] = currentUser?.id;
-
-        await supabase.from('cash_drawer_logs').insert(onlineLogMap);
-        
-        // Update balance table if amount is changed
-        if (amount != 0) {
-          final remoteBalRes = await supabase
-              .from('balance')
-              .select()
-              .order('id', ascending: false)
-              .limit(1)
-              .maybeSingle();
-
-          final currentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
-          await supabase.from('balance').insert({
-            'currentBalance': currentBal + amount.toInt(),
-          });
-        }
-        
-        logMap['is_synced'] = 1;
+        await supabase.from('cash_drawer_logs').insert(
+              Map<String, dynamic>.from(logMap)..['user_id'] = currentUser?.id,
+            );
+        onlineLogged = true;
       } catch (e) {
         debugPrint('Failed to log cash drawer online: $e');
-        logMap['is_synced'] = 0;
       }
-    } else {
-      logMap['is_synced'] = 0;
     }
+    logMap['is_synced'] = onlineLogged ? 1 : 0;
 
     try {
       await db.insert('cash_drawer_logs', logMap);
@@ -1606,42 +1755,32 @@ class CashDrawerRepository {
       debugPrint('Failed to log cash drawer locally: $e');
     }
 
-    // 3. Update balance if it's an add/withdraw
-    if (type == 'add' || type == 'withdraw') {
-      final change = type == 'add' ? amount : -amount;
-      
-      final res = await db.query('balance', orderBy: 'id DESC', limit: 1);
-      int currentBal = 0;
-      int? balId;
-      if (res.isNotEmpty) {
-        currentBal = res.first['currentBalance'] as int? ?? 0;
-        balId = res.first['id'] as int;
-      }
-      currentBal += change.toInt();
-      
-      if (balId == null) {
-        await db.insert('balance', {'currentBalance': currentBal, 'is_synced': 0});
-      } else {
-        await db.update('balance', {'currentBalance': currentBal, 'is_synced': 0}, where: 'id = ?', whereArgs: [balId]);
-      }
-
-      if (isOnline) {
-        try {
-          final remoteBalRes = await supabase
-              .from('balance')
-              .select()
-              .order('id', ascending: false)
-              .limit(1)
-              .maybeSingle();
-          final remoteCurrentBal = remoteBalRes?['currentBalance'] as int? ?? 0;
-          await supabase.from('balance').insert({
-            'currentBalance': remoteCurrentBal + change.toInt(),
-          });
-        } catch (e) {
-          debugPrint('Failed to update remote balance: $e');
-        }
-      }
-      ref.invalidate(balanceProvider);
+    // 3. Apply the effective balance change in a single place.
+    //    - 'open' with amount==0: a pure drawer open (e.g. remote open),
+    //      no balance movement.
+    //    - 'open' with amount!=0: cash-sale proceeds entering the drawer.
+    //    - 'add': deposit into the drawer.
+    //    - 'withdraw': withdrawal from the drawer.
+    //    Card sales never call this method for their totals, so card money
+    //    can never touch the drawer balance here.
+    int balanceChange = 0;
+    if (type == 'withdraw') {
+      balanceChange = -amount.toInt();
+    } else if (amount != 0) {
+      balanceChange = amount.toInt();
     }
+    if (balanceChange == 0) return;
+
+    bool remoteOk = false;
+    if (isOnline) {
+      try {
+        await BalanceRepo.addRemote(supabase, balanceChange);
+        remoteOk = true;
+      } catch (e) {
+        debugPrint('Failed to update remote balance: $e');
+      }
+    }
+    await BalanceRepo.addLocal(db, balanceChange, isSynced: remoteOk);
+    ref.invalidate(balanceProvider);
   }
 }

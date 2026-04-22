@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 
@@ -27,7 +26,7 @@ class LocalDatabase {
 
     return await openDatabase(
       path,
-      version: 9,
+      version: 11,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -94,8 +93,32 @@ class LocalDatabase {
     }
     if (oldVersion < 9) {
       // Add remote_id to sales for duplicate-upload prevention
+      await db.execute('ALTER TABLE sales ADD COLUMN remote_id INTEGER');
+    }
+    if (oldVersion < 10) {
+      // Collapse the `balance` table to a single row pinned at id=1.
+      // Previously every cash-drawer change inserted a new row; we now treat
+      // the balance as a single persistent variable.
+      final rows = await db.query('balance', orderBy: 'id DESC');
+      int latest = 0;
+      int isSynced = 1;
+      if (rows.isNotEmpty) {
+        latest = (rows.first['currentBalance'] as int?) ?? 0;
+        isSynced = (rows.first['is_synced'] as int?) ?? 1;
+      }
+      await db.delete('balance');
+      await db.insert('balance', {
+        'id': 1,
+        'currentBalance': latest,
+        'is_synced': isSynced,
+      });
+    }
+    if (oldVersion < 11) {
+      // Add a parallel card-balance column. Card sales deposit into this
+      // variable so the owner can reconcile against the payment processor
+      // without querying the sales table each time.
       await db.execute(
-        'ALTER TABLE sales ADD COLUMN remote_id INTEGER',
+        'ALTER TABLE balance ADD COLUMN cardBalance INTEGER DEFAULT 0',
       );
     }
   }
@@ -148,15 +171,25 @@ class LocalDatabase {
     )
     ''');
 
-    // 4. balance
+    // 4. balance — single-row variable pinned at id=1.
+    //    currentBalance holds the cash drawer balance.
+    //    cardBalance accumulates card-payment revenue so it can be
+    //    reconciled with the external card processor statement.
     await db.execute('''
     CREATE TABLE balance (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      currentBalance INTEGER,
+      currentBalance INTEGER DEFAULT 0,
+      cardBalance INTEGER DEFAULT 0,
       is_synced INTEGER DEFAULT 0
     )
     ''');
+    await db.insert('balance', {
+      'id': 1,
+      'currentBalance': 0,
+      'cardBalance': 0,
+      'is_synced': 1,
+    });
 
     // 5. sales
     await db.execute('''

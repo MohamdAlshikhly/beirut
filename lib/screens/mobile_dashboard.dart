@@ -188,6 +188,7 @@ class _MainDashboardTab extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final balanceAsync = ref.watch(balanceProvider);
+    final cardBalanceAsync = ref.watch(cardBalanceProvider);
     final todaySalesAsync = ref.watch(todaySalesProvider);
     final todaySalesCountAsync = ref.watch(todaySalesCountProvider);
     final productsAsync = ref.watch(productsProvider);
@@ -321,6 +322,31 @@ class _MainDashboardTab extends ConsumerWidget {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          cardBalanceAsync.when(
+            data: (val) => _buildStatCard(
+              context,
+              'رصيد البطاقة (تراكمي)',
+              '${currencyFormatter.format(val)} د.ع',
+              PhosphorIconsFill.creditCard,
+              const Color(0xFF0EA5E9),
+            ),
+            loading: () => _buildStatCard(
+              context,
+              'رصيد البطاقة (تراكمي)',
+              '',
+              PhosphorIconsFill.creditCard,
+              const Color(0xFF0EA5E9),
+              isLoading: true,
+            ),
+            error: (e, st) => _buildStatCard(
+              context,
+              'رصيد البطاقة (تراكمي)',
+              'خطأ',
+              PhosphorIconsFill.creditCard,
+              Colors.red,
+            ),
+          ),
           const SizedBox(height: 32),
           const Text(
             'الفواتير',
@@ -402,10 +428,9 @@ class _MainDashboardTab extends ConsumerWidget {
                 ),
               );
               if (confirm == true) {
-                await ref.read(cashDrawerProvider).logAndOpen(
-                  type: 'open',
-                  reason: 'remote_open',
-                );
+                await ref
+                    .read(cashDrawerProvider)
+                    .logAndOpen(type: 'open', reason: 'remote_open');
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('تم إرسال أمر الفتح بنجاح!')),
@@ -731,9 +756,7 @@ class _InventoryTabState extends ConsumerState<_InventoryTab> {
             ),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => const CardsManagementScreen(),
-              ),
+              MaterialPageRoute(builder: (_) => const CardsManagementScreen()),
             ),
           ),
           const SizedBox(height: 20),
@@ -1185,7 +1208,7 @@ class _UserSettingsTab extends ConsumerWidget {
                 ),
                 trailing: Switch(
                   value: isDark,
-                  activeColor: AppColors.primary,
+                  activeThumbColor: AppColors.primary,
                   onChanged: (val) =>
                       ref.read(themeModeProvider.notifier).toggle(),
                 ),

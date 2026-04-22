@@ -5,6 +5,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import '../providers/data_providers.dart';
 import '../utils/app_colors.dart';
 import '../utils/glass_container.dart';
+import '../utils/print_utils.dart';
 
 class RetireMoneyScreen extends ConsumerStatefulWidget {
   const RetireMoneyScreen({super.key});
@@ -37,23 +38,23 @@ class _RetireMoneyScreenState extends ConsumerState<RetireMoneyScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final client = ref.read(supabaseProvider);
-
-      final res = await client
-          .from('balance')
-          .select()
-          .order('id', ascending: false)
-          .limit(1)
-          .maybeSingle();
-
-      final currentBal = (res?['currentBalance'] as num?)?.toInt() ?? 0;
-      final newBal = currentBal - amount;
-
-      await client.from('balance').insert({
-        'currentBalance': newBal,
-      });
-
-      ref.invalidate(balanceProvider);
+      // Route through the drawer repository so the physical drawer opens,
+      // the log row is written, and the balance is decremented via a single
+      // BalanceRepo upsert rather than a new history insert.
+      await ref.read(cashDrawerProvider).logAndOpen(
+            type: 'withdraw',
+            reason: 'سحب أموال',
+            amount: amount.toDouble(),
+          );
+      if (!mounted) return;
+      // Print a short withdrawal receipt documenting the operation.
+      await CashDrawerReceipt.printDrawerReceipt(
+        context: context,
+        ref: ref,
+        type: 'withdraw',
+        amount: amount,
+        reason: 'سحب أموال',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

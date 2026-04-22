@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/data_providers.dart';
+import '../utils/print_utils.dart';
 
 class CashDrawerDialog extends ConsumerStatefulWidget {
   const CashDrawerDialog({super.key});
@@ -32,7 +33,7 @@ class _CashDrawerDialogState extends ConsumerState<CashDrawerDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
-                value: _type,
+                initialValue: _type,
                 decoration: const InputDecoration(labelText: 'نوع العملية'),
                 items: const [
                   DropdownMenuItem(value: 'open', child: Text('فتح الدرج فقط')),
@@ -85,9 +86,19 @@ class _CashDrawerDialogState extends ConsumerState<CashDrawerDialog> {
                     amount: amount,
                   );
 
+              // Print a receipt for add / withdraw / manual-open ops.
+              if (mounted) {
+                await CashDrawerReceipt.printDrawerReceipt(
+                  context: context,
+                  ref: ref,
+                  type: _type,
+                  amount: amount.toInt(),
+                  reason: reason.isEmpty ? null : reason,
+                );
+              }
               if (mounted) Navigator.pop(context);
             },
-            child: const Text('تأفيذ'),
+            child: const Text('تنفيذ'),
           ),
         ],
       ),
