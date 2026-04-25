@@ -334,23 +334,65 @@ Future<void> _mirrorCategoriesToLocal(List<Map<String, dynamic>> data) async {
 Future<void> _mirrorProductsToLocal(List<Map<String, dynamic>> data) async {
   final db = await LocalDatabase.instance.database;
   try {
+    // Reconcile remote quantity against unsynced local stock_movements and
+    // preserve rows the local user has edited but not yet pushed. Without
+    // this, a remote refetch right after a desktop sale would overwrite the
+    // locally-decremented quantity (and clear is_synced) before syncUp had a
+    // chance to push the movement, leaving local and remote permanently out
+    // of sync. Mirrors the logic in SyncService.syncDown.
+    final localProdRows = await db.query(
+      'products',
+      columns: ['id', 'is_synced'],
+    );
+    final localProdMap = <int, Map<String, Object?>>{
+      for (var r in localProdRows) r['id'] as int: r,
+    };
+
+    final unsyncedMovementRows = await db.query(
+      'stock_movements',
+      columns: ['product_id', 'change'],
+      where: 'is_synced = 0',
+    );
+    final unsyncedAdjustMap = <int, double>{};
+    for (var m in unsyncedMovementRows) {
+      final pid = m['product_id'] as int?;
+      if (pid == null) continue;
+      unsyncedAdjustMap[pid] =
+          (unsyncedAdjustMap[pid] ?? 0) + (m['change'] as num).toDouble();
+    }
+
     // Disable FK checks during mirror — categories may not be local yet
     await db.execute('PRAGMA foreign_keys = OFF');
     for (var prod in data) {
       try {
+        final pid = prod['id'] as int;
+        final remoteQty = (prod['quantity'] as num?)?.toDouble() ?? 0.0;
+        final reconciledQty = remoteQty + (unsyncedAdjustMap[pid] ?? 0);
+
+        final local = localProdMap[pid];
+        if (local != null && local['is_synced'] == 0) {
+          // Preserve pending local edits (price/name/etc); only refresh
+          // quantity, reconciled with any unsynced movements.
+          await db.update(
+            'products',
+            {'quantity': reconciledQty},
+            where: 'id = ?',
+            whereArgs: [pid],
+          );
+          continue;
+        }
+
         await db.insert(
           'products',
           {
-            'id': prod['id'],
+            'id': pid,
             'name': prod['name'],
             'barcode': prod['barcode'],
             'price': (prod['price'] as num).toDouble(),
             'cost_price': prod['cost_price'] != null
                 ? (prod['cost_price'] as num).toDouble()
                 : null,
-            'quantity': prod['quantity'] != null
-                ? (prod['quantity'] as num).toDouble()
-                : 0.0,
+            'quantity': reconciledQty,
             'category_id': prod['category_id'],
             'image_url': prod['image_url'],
             'base_unit_id': prod['base_unit_id'],
