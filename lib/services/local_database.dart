@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
 
@@ -26,7 +27,7 @@ class LocalDatabase {
 
     return await openDatabase(
       path,
-      version: 11,
+      version: 12,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -121,6 +122,65 @@ class LocalDatabase {
         'ALTER TABLE balance ADD COLUMN cardBalance INTEGER DEFAULT 0',
       );
     }
+    if (oldVersion < 12) {
+      // Idempotency keys + relational sale<->movement link.
+      // Same migration executes on Supabase via supabase/migrations/20260429*.
+      await db.execute(
+        'ALTER TABLE stock_movements ADD COLUMN client_id TEXT',
+      );
+      await db.execute(
+        'ALTER TABLE stock_movements ADD COLUMN sale_id INTEGER',
+      );
+      await db.execute(
+        'ALTER TABLE sales ADD COLUMN client_id TEXT',
+      );
+      // Backfill existing rows so we can enforce uniqueness.
+      final movs = await db.query('stock_movements', columns: ['id']);
+      for (final m in movs) {
+        await db.update(
+          'stock_movements',
+          {'client_id': _genUuidV4()},
+          where: 'id = ?',
+          whereArgs: [m['id']],
+        );
+      }
+      final sls = await db.query('sales', columns: ['id']);
+      for (final s in sls) {
+        await db.update(
+          'sales',
+          {'client_id': _genUuidV4()},
+          where: 'id = ?',
+          whereArgs: [s['id']],
+        );
+      }
+      await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS stock_movements_client_id_uniq '
+        'ON stock_movements(client_id)',
+      );
+      await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS sales_client_id_uniq '
+        'ON sales(client_id)',
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS stock_movements_sale_id_idx '
+        'ON stock_movements(sale_id)',
+      );
+    }
+  }
+
+  // RFC 4122 v4 UUID without external deps; only used for one-off migration
+  // backfill. Runtime code uses the `uuid` package.
+  static String _genUuidV4() {
+    final r = math.Random.secure();
+    final bytes = List<int>.generate(16, (_) => r.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    String hex(int i) => bytes[i].toRadixString(16).padLeft(2, '0');
+    return '${hex(0)}${hex(1)}${hex(2)}${hex(3)}-'
+        '${hex(4)}${hex(5)}-'
+        '${hex(6)}${hex(7)}-'
+        '${hex(8)}${hex(9)}-'
+        '${hex(10)}${hex(11)}${hex(12)}${hex(13)}${hex(14)}${hex(15)}';
   }
 
   Future _onConfigure(Database db) async {
@@ -200,10 +260,14 @@ class LocalDatabase {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       user_id INTEGER,
       remote_id INTEGER,
+      client_id TEXT,
       is_synced INTEGER DEFAULT 0,
       FOREIGN KEY (user_id) REFERENCES users (id)
     )
     ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX sales_client_id_uniq ON sales(client_id)',
+    );
 
     // 6. sale_items
     await db.execute('''
@@ -239,11 +303,21 @@ class LocalDatabase {
       product_id INTEGER,
       change REAL,
       reason TEXT,
+      sale_id INTEGER,
+      client_id TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       is_synced INTEGER DEFAULT 0,
-      FOREIGN KEY (product_id) REFERENCES products (id)
+      FOREIGN KEY (product_id) REFERENCES products (id),
+      FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE SET NULL
     )
     ''');
+    await db.execute(
+      'CREATE UNIQUE INDEX stock_movements_client_id_uniq '
+      'ON stock_movements(client_id)',
+    );
+    await db.execute(
+      'CREATE INDEX stock_movements_sale_id_idx ON stock_movements(sale_id)',
+    );
 
     // 9. cash_drawer_logs
     await db.execute('''

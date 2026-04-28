@@ -10,6 +10,8 @@ import '../main.dart'; // To access global prefs
 import '../models/models.dart';
 import '../services/local_database.dart';
 import '../services/printing_service.dart';
+import '../services/stock_service.dart';
+import 'package:uuid/uuid.dart';
 
 import 'dart:io' show Platform;
 
@@ -970,93 +972,28 @@ class CheckoutRepository {
   final Ref ref;
   CheckoutRepository(this.ref);
 
+  /// Backwards-compatible thin wrapper around [StockService.apply].
+  ///
+  /// All stock writes now go through one path: append a `stock_movement`
+  /// (with a fresh `client_id` UUID) and adjust `products.quantity` in
+  /// the same SQLite transaction. The remote write happens later in
+  /// `SyncService.syncUp` via UPSERT keyed on `client_id`, which is
+  /// idempotent — a network retry no longer multiplies the change.
+  ///
+  /// `isOnline` is accepted but ignored; the new design always writes
+  /// locally first and lets the sync service propagate to Supabase.
   Future<void> updateStockWithLinkage({
     required int productId,
     required double change,
     required String reason,
     bool isOnline = true,
+    int? localSaleId,
   }) async {
-    final supabase = ref.read(supabaseProvider);
-    final db = await LocalDatabase.instance.database;
-
-    // 1. Fetch products involved locally first to get linkage info
-    final localProds = await db.query('products');
-    final allProducts = localProds
-        .map((json) => Product.fromJson(json))
-        .toList();
-    final product = allProducts.firstWhere((p) => p.id == productId);
-
-    // List of updates to perform: {id: change}
-    Map<int, double> updates = {productId: change};
-
-    // Linkage: If this is a Box, update the Can
-    if (product.baseUnitId != null) {
-      updates[product.baseUnitId!] = change * product.baseUnitConversion;
-    }
-
-    // Reverse Linkage: If this is a Can, update all Boxes that link to it
-    for (var p in allProducts) {
-      if (p.baseUnitId == productId) {
-        updates[p.id] = change / p.baseUnitConversion;
-      }
-    }
-
-    // Execute Updates
-    for (var entry in updates.entries) {
-      final pid = entry.key;
-      final val = entry.value;
-
-      if (isOnline) {
-        try {
-          final res = await supabase
-              .from('products')
-              .select('quantity')
-              .eq('id', pid)
-              .maybeSingle();
-
-          if (res != null) {
-            final current = (res['quantity'] as num).toDouble();
-            await supabase
-                .from('products')
-                .update({'quantity': current + val})
-                .eq('id', pid);
-            await supabase.from('stock_movements').insert({
-              'product_id': pid,
-              'change': val,
-              'reason': reason,
-            });
-          }
-        } catch (e) {
-          debugPrint('Online stock update failed for $pid: $e');
-        }
-      }
-
-      // Always update local for consistency (sync will handle it later if offline)
-      try {
-        final localRes = await db.query(
-          'products',
-          where: 'id = ?',
-          whereArgs: [pid],
-        );
-        if (localRes.isNotEmpty) {
-          final current = (localRes.first['quantity'] as num).toDouble();
-          await db.update(
-            'products',
-            {'quantity': current + val, 'is_synced': isOnline ? 1 : 0},
-            where: 'id = ?',
-            whereArgs: [pid],
-          );
-          await db.insert('stock_movements', {
-            'product_id': pid,
-            'change': val,
-            'reason': reason,
-            'is_synced': isOnline ? 1 : 0,
-          });
-        }
-      } catch (e) {
-        debugPrint('Local stock update failed for $pid: $e');
-      }
-    }
+    await ref.read(stockServiceProvider).apply(
+      inputs: [StockChange(productId: productId, change: change)],
+      reason: reason,
+      localSaleId: localSaleId,
+    );
   }
 
   Future<void> _updateDrawerBalance(Database db, double amountChange) async {
@@ -1068,240 +1005,102 @@ class CheckoutRepository {
     final cartItems = ref.read(cartProvider);
     if (cartItems.isEmpty) return null;
 
-    final supabase = ref.read(supabaseProvider);
     final total = ref.read(cartProvider.notifier).total;
     final currentUser = ref.read(authProvider);
     final db = await LocalDatabase.instance.database;
+    final stock = ref.read(stockServiceProvider);
+    final saleClientId = const Uuid().v4();
 
-    // ── DESKTOP: Instant local save, Supabase sync happens in background ──
-    final isDesktop =
-        !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
-    if (isDesktop) {
-      try {
-        // 1. Save sale to SQLite immediately (is_synced=0 → syncUp will push it)
-        await db.execute('PRAGMA foreign_keys = OFF');
-        final localSaleId = await db.insert('sales', {
+    // Atomic local-first checkout. Sale, sale_items, and stock_movements
+    // commit together inside one SQLite transaction, so we cannot end up
+    // with a sale on Supabase that has no matching stock movement (the
+    // 4286-row mismatch we recovered from). Sync to Supabase happens
+    // out-of-band via SyncService.syncUp using UPSERT on client_id, so
+    // retries are idempotent and a network blip can no longer create
+    // duplicate or missing movements.
+    int localSaleId;
+    try {
+      localSaleId = await db.transaction<int>((txn) async {
+        final saleId = await txn.insert('sales', {
           'total_price': total,
           'payment_type': paymentType,
           if (currentUser != null) 'user_id': currentUser.id,
+          'client_id': saleClientId,
           'is_synced': 0,
         });
+
         for (final item in cartItems) {
           final itemPrice = item.priceOverride ?? item.product.price;
-          await db.insert('sale_items', {
-            'sale_id': localSaleId,
+          await txn.insert('sale_items', {
+            'sale_id': saleId,
             'product_id': item.product.id,
             'quantity': item.quantity.toInt(),
             'price': itemPrice,
           });
         }
-        await db.execute('PRAGMA foreign_keys = ON');
 
-        // 2. Update local stock (creates stock_movements with is_synced=0)
-        for (final item in cartItems) {
-          await updateStockWithLinkage(
-            productId: item.product.id,
-            change: -item.quantity,
-            reason: 'بيع في فاتورة #$localSaleId',
-            isOnline: false,
-          );
-        }
+        await stock.applyInTransaction(
+          txn: txn,
+          inputs: [
+            for (final item in cartItems)
+              StockChange(
+                productId: item.product.id,
+                change: -item.quantity.toDouble(),
+              ),
+          ],
+          reason: 'بيع',
+          localSaleId: saleId,
+        );
 
-        // 3. Open cash drawer physically + log locally as unsynced.
-        //    Card sales never open the drawer — the money is on the card
-        //    processor side — but we still add to the local cardBalance
-        //    mirror here so the dashboard updates instantly.
-        if (paymentType == 'cash') {
-          try {
-            await ref.read(printingServiceProvider).openCashDrawer();
-          } catch (e) {
-            debugPrint('Cash drawer open failed: $e');
-          }
-          try {
-            await db.insert('cash_drawer_logs', {
-              'type': 'open',
-              'reason': 'بيع في فاتورة #$localSaleId',
-              'amount': total,
-              'user_id': currentUser?.id,
-              'created_at': DateTime.now().toUtc().toIso8601String(),
-              'is_synced': 0,
-            });
-          } catch (_) {}
-        } else if (paymentType == 'card') {
-          try {
-            await BalanceRepo.addCardLocal(db, total.toInt(), isSynced: false);
-          } catch (e) {
-            debugPrint('Local card balance update failed: $e');
-          }
-        }
-
-        // 4. Clear cart & refresh UI immediately
-        ref.read(cartProvider.notifier).clear();
-        ref.read(dbUpdateTriggerProvider.notifier).trigger();
-        ref.invalidate(todaySalesProvider);
-        ref.invalidate(todaySalesCountProvider);
-
-        // 5. Update card spended_balance in background if cart has card items
-        final cardItems = cartItems.where((i) => i.cardId != null).toList();
-        if (cardItems.isNotEmpty && ref.read(isOnlineProvider)) {
-          Future.delayed(
-            Duration.zero,
-            () => ref
-                .read(cardsRepositoryProvider)
-                .incrementSpendedBalance(cardItems),
-          );
-        }
-
-        // 6. Return local ID immediately — caller triggers syncUp in background
-        return localSaleId;
-      } catch (e) {
-        debugPrint('Desktop instant checkout failed: $e');
-        try {
-          await db.execute('PRAGMA foreign_keys = ON');
-        } catch (_) {}
-        return null;
-      }
+        return saleId;
+      });
+    } catch (e) {
+      debugPrint('Checkout transaction failed: $e');
+      return null;
     }
 
-    // ── MOBILE / WEB: Original online-first transaction ──
-    try {
-      // 1. Insert Sale
-      final saleResponse = await supabase
-          .from('sales')
-          .insert({
-            'total_price': total,
-            'payment_type': paymentType,
-            if (currentUser != null) 'user_id': currentUser.id,
-          })
-          .select()
-          .single();
-
-      final saleId = saleResponse['id'];
-
-      // 2. Insert Sale Items (Synchronously)
-      for (final item in cartItems) {
-        final itemPrice = item.priceOverride ?? item.product.price;
-        await supabase.from('sale_items').insert({
-          'sale_id': saleId,
-          'product_id': item.product.id,
-          'quantity': item.quantity.toInt(),
-          'price': itemPrice,
-        });
-
-        // 3. Update Stock with Linkage (Remote) - Await each to be sure
-        await updateStockWithLinkage(
-          productId: item.product.id,
-          change: -item.quantity,
-          reason: 'بيع في فاتورة #$saleId (Online)',
-          isOnline: true,
-        );
-      }
-
-      // 4. Update Balance and Log (Online) — cash into drawer, card into
-      //    the separate cardBalance variable.
-      if (paymentType == 'cash') {
-        await ref.read(cashDrawerProvider).logAndOpen(
-              type: 'open',
-              reason: 'بيع في فاتورة #$saleId (تلقائي)',
-              amount: total,
-            );
-      } else if (paymentType == 'card') {
-        try {
-          await BalanceRepo.addCardRemote(supabase, total.toInt());
-          await BalanceRepo.addCardLocal(db, total.toInt(), isSynced: true);
-        } catch (e) {
-          debugPrint('Online card balance update failed: $e');
-          await BalanceRepo.addCardLocal(db, total.toInt(), isSynced: false);
-        }
-      }
-
-      // 5. Update Local DB for sync consistency using the remote saleId
+    // Side effects after the transaction commits — these are best-effort
+    // and never block the sale from succeeding.
+    if (paymentType == 'cash') {
       try {
-        await db.insert(
-          'sales',
-          {
-            'id': saleId,
-            'total_price': total,
-            'payment_type': paymentType,
-            if (currentUser != null) 'user_id': currentUser.id,
-            'is_synced': 1,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-
-        for (final item in cartItems) {
-          final itemPrice = item.priceOverride ?? item.product.price;
-          await db.insert(
-            'sale_items',
-            {
-              'sale_id': saleId,
-              'product_id': item.product.id,
-              'quantity': item.quantity.toInt(),
-              'price': itemPrice,
-            },
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
-      } catch (localError) {
-        debugPrint('Local mirror update failed: $localError');
+        await ref.read(printingServiceProvider).openCashDrawer();
+      } catch (e) {
+        debugPrint('Cash drawer open failed: $e');
       }
-
-      ref.read(cartProvider.notifier).clear();
-      ref.invalidate(balanceProvider);
-      // ref.invalidate(productsProvider); // Removed to prevent flickering while online
-      ref.invalidate(todaySalesProvider);
-      ref.invalidate(todaySalesCountProvider);
-      return saleId;
-    } catch (onlineError) {
-      debugPrint('Online checkout failed: $onlineError');
-
-      // OFFLINE FALLBACK (Only if internet fails)
       try {
-        final saleId = await db.insert('sales', {
-          'total_price': total,
-          'payment_type': paymentType,
-          if (currentUser != null) 'user_id': currentUser.id,
+        await db.insert('cash_drawer_logs', {
+          'type': 'open',
+          'reason': 'بيع في فاتورة #$localSaleId',
+          'amount': total,
+          'user_id': currentUser?.id,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
           'is_synced': 0,
         });
-
-        for (final item in cartItems) {
-          await db.insert('sale_items', {
-            'sale_id': saleId,
-            'product_id': item.product.id,
-            'quantity': item.quantity,
-            'price': item.product.price,
-          });
-
-          // In offline mode, we update local stock if possible to keep business running
-          await updateStockWithLinkage(
-            productId: item.product.id,
-            change: -item.quantity,
-            reason: 'بيع أوفلاين #$saleId',
-            isOnline: false,
-          );
-        }
-        if (paymentType == 'cash') {
-          await ref.read(cashDrawerProvider).logAndOpen(
-            type: 'open',
-            reason: 'بيع أوفلاين #$saleId',
-            amount: total.toDouble(),
-          );
-        }
-
-        ref.read(cartProvider.notifier).clear();
-        ref
-            .read(dbUpdateTriggerProvider.notifier)
-            .trigger(); // Explicitly trigger update for offline UI
-        ref.invalidate(balanceProvider);
-        ref.invalidate(productsProvider);
-        ref.invalidate(todaySalesProvider);
-        ref.invalidate(todaySalesCountProvider);
-        return saleId;
-      } catch (offlineError) {
-        debugPrint('Offline checkout also failed: $offlineError');
-        return null;
+      } catch (_) {}
+    } else if (paymentType == 'card') {
+      try {
+        await BalanceRepo.addCardLocal(db, total.toInt(), isSynced: false);
+      } catch (e) {
+        debugPrint('Local card balance update failed: $e');
       }
     }
+
+    final cardItems = cartItems.where((i) => i.cardId != null).toList();
+    if (cardItems.isNotEmpty && ref.read(isOnlineProvider)) {
+      Future.delayed(
+        Duration.zero,
+        () => ref
+            .read(cardsRepositoryProvider)
+            .incrementSpendedBalance(cardItems),
+      );
+    }
+
+    ref.read(cartProvider.notifier).clear();
+    ref.read(dbUpdateTriggerProvider.notifier).trigger();
+    ref.invalidate(todaySalesProvider);
+    ref.invalidate(todaySalesCountProvider);
+
+    return localSaleId;
   }
 
   Future<int?> updateSale(String paymentType) async {

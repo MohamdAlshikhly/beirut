@@ -312,97 +312,133 @@ class SyncService {
     try {
       final db = await LocalDatabase.instance.database;
 
-      // 1. Sync Sales & Sale Items
+      // ── 1. Sync Sales (UPSERT on client_id, idempotent) ──────────────
       final unsyncedSales = await db.query(
         'sales',
         where: 'is_synced = ?',
         whereArgs: [0],
       );
 
+      // Maps localSaleId -> remoteSaleId so the stock_movements & sale_items
+      // sync passes that follow can rewrite their FK to the correct remote id.
+      final localToRemoteSaleId = <int, int>{};
+
       for (var sale in unsyncedSales) {
         final saleMap = Map<String, dynamic>.from(sale);
-        final localSaleId = saleMap['id'];
-        final existingRemoteId = saleMap['remote_id'];
+        final localSaleId = saleMap['id'] as int;
+        final clientId = saleMap['client_id'] as String?;
+        final existingRemoteId = saleMap['remote_id'] as int?;
 
-        int remoteSaleId;
+        // Build the payload for Supabase: drop local-only fields and
+        // the local autoincrement id (Supabase assigns its own).
+        saleMap.remove('id');
+        saleMap.remove('is_synced');
+        saleMap.remove('remote_id');
 
-        if (existingRemoteId == null) {
-          // ── Fresh upload ──
-          saleMap.remove('id');
-          saleMap.remove('is_synced');
-          saleMap.remove('remote_id');
+        try {
+          int remoteSaleId;
+          if (existingRemoteId != null) {
+            // Crash-recovery: row already exists, just refresh fields.
+            await _supabase
+                .from('sales')
+                .update(saleMap)
+                .eq('id', existingRemoteId);
+            remoteSaleId = existingRemoteId;
+          } else if (clientId != null) {
+            // Idempotent upsert by client_id: a retry of the same sale
+            // will overwrite itself in place rather than create a duplicate.
+            final res = await _supabase
+                .from('sales')
+                .upsert(saleMap, onConflict: 'client_id')
+                .select('id')
+                .single();
+            remoteSaleId = res['id'] as int;
+            await db.update(
+              'sales',
+              {'remote_id': remoteSaleId},
+              where: 'id = ?',
+              whereArgs: [localSaleId],
+            );
+          } else {
+            // Legacy row without client_id (pre-migration): plain insert.
+            final res = await _supabase
+                .from('sales')
+                .insert(saleMap)
+                .select('id')
+                .single();
+            remoteSaleId = res['id'] as int;
+            await db.update(
+              'sales',
+              {'remote_id': remoteSaleId},
+              where: 'id = ?',
+              whereArgs: [localSaleId],
+            );
+          }
 
-          // Insert Sale to Supabase
-          final remoteSale = await _supabase
-              .from('sales')
-              .insert(saleMap)
-              .select()
-              .single();
-          remoteSaleId = remoteSale['id'];
+          localToRemoteSaleId[localSaleId] = remoteSaleId;
 
-          // Save remote_id IMMEDIATELY — prevents duplicate insert if app
-          // crashes before is_synced is set to 1.
+          // Push balance only on FRESH upload (not crash-recovery). Cash →
+          // drawer, Card → card accumulator.
+          if (existingRemoteId == null) {
+            final totalPriceNum = saleMap['total_price'] as num;
+            try {
+              if (saleMap['payment_type'] == 'cash') {
+                await BalanceRepo.addRemote(_supabase, totalPriceNum.toInt());
+              } else if (saleMap['payment_type'] == 'card') {
+                await BalanceRepo.addCardRemote(
+                  _supabase,
+                  totalPriceNum.toInt(),
+                );
+              }
+            } catch (balErr) {
+              debugPrint(
+                '⚠️ Error updating remote balance during syncUp: $balErr',
+              );
+            }
+          }
+
+          // Push sale_items. We delete any pre-existing items for this
+          // remote sale first so re-uploads do not double-insert items
+          // (sale_items has no client_id of its own).
+          await _supabase
+              .from('sale_items')
+              .delete()
+              .eq('sale_id', remoteSaleId);
+          final localItems = await db.query(
+            'sale_items',
+            where: 'sale_id = ?',
+            whereArgs: [localSaleId],
+          );
+          for (var item in localItems) {
+            final itemMap = Map<String, dynamic>.from(item);
+            itemMap.remove('id');
+            itemMap['sale_id'] = remoteSaleId;
+            itemMap['quantity'] = (itemMap['quantity'] as num).toInt();
+            try {
+              await _supabase.from('sale_items').insert(itemMap);
+            } catch (itemErr) {
+              debugPrint('ℹ️ Sale item insert error (continuing): $itemErr');
+            }
+          }
+
           await db.update(
             'sales',
-            {'remote_id': remoteSaleId},
+            {'is_synced': 1},
             where: 'id = ?',
             whereArgs: [localSaleId],
           );
-
-          // Cash → drawer; Card → card accumulator. Card money never
-          // touches the drawer; cash never touches the card variable.
-          final totalPriceNum = saleMap['total_price'] as num;
-          try {
-            if (saleMap['payment_type'] == 'cash') {
-              await BalanceRepo.addRemote(_supabase, totalPriceNum.toInt());
-            } else if (saleMap['payment_type'] == 'card') {
-              await BalanceRepo.addCardRemote(_supabase, totalPriceNum.toInt());
-            }
-          } catch (balErr) {
-            debugPrint(
-              '⚠️ Error updating remote balance during syncUp: $balErr',
-            );
-          }
-        } else {
-          // ── Crash recovery: sale already uploaded, skip insert & balance ──
-          remoteSaleId = existingRemoteId as int;
-          debugPrint(
-            'ℹ️ Sale $localSaleId already uploaded (remote: $remoteSaleId), skipping insert.',
-          );
+        } catch (saleErr) {
+          debugPrint('⚠️ Failed to push sale $localSaleId: $saleErr');
         }
-
-        // Fetch local sale items
-        final localItems = await db.query(
-          'sale_items',
-          where: 'sale_id = ?',
-          whereArgs: [localSaleId],
-        );
-
-        for (var item in localItems) {
-          final itemMap = Map<String, dynamic>.from(item);
-          itemMap.remove('id');
-          itemMap['sale_id'] = remoteSaleId;
-
-          final mapToSync = Map<String, dynamic>.from(itemMap);
-          mapToSync['quantity'] = (mapToSync['quantity'] as num).toInt();
-          try {
-            await _supabase.from('sale_items').insert(mapToSync);
-          } catch (itemErr) {
-            // May already exist in crash-recovery scenario — safe to ignore
-            debugPrint('ℹ️ Sale item already exists or error: $itemErr');
-          }
-        }
-
-        // Mark as synced locally
-        await db.update(
-          'sales',
-          {'is_synced': 1},
-          where: 'id = ?',
-          whereArgs: [localSaleId],
-        );
       }
 
-      // 2. Sync Stock Movements
+      // ── 2. Sync Stock Movements (UPSERT on client_id, idempotent) ────
+      // The previous implementation used plain INSERT + manual quantity
+      // update, which double-counted on every retry — that bug applied
+      // sale 5560's return 115 times. UPSERT with `ignoreDuplicates`
+      // guarantees only the FIRST attempt actually writes; later retries
+      // become no-ops, so the products.quantity update is safe to do
+      // exactly once per movement.
       final unsyncedMovements = await db.query(
         'stock_movements',
         where: 'is_synced = ?',
@@ -411,36 +447,97 @@ class SyncService {
       for (var mov in unsyncedMovements) {
         final movMap = Map<String, dynamic>.from(mov);
         final localMovId = movMap['id'];
+        final localSaleId = movMap['sale_id'] as int?;
         movMap.remove('id');
         movMap.remove('is_synced');
 
-        await _supabase.from('stock_movements').insert(movMap);
-
-        // Update remote stock for ALL movements (Sales and Manual)
-        // to ensure linkage and consistency are preserved.
-        try {
-          final productId = movMap['product_id'];
-          final change = (movMap['change'] as num).toDouble();
-          final remoteProd = await _supabase
-              .from('products')
-              .select('quantity')
-              .eq('id', productId)
-              .single();
-          final currentRemoteQty = (remoteProd['quantity'] as num).toDouble();
-          await _supabase
-              .from('products')
-              .update({'quantity': currentRemoteQty + change})
-              .eq('id', productId);
-        } catch (stkErr) {
-          debugPrint('⚠️ Error updating remote stock for movement: $stkErr');
+        // Rewrite local sale_id → remote sale_id where we know the mapping
+        // (the sale we just uploaded above).
+        if (localSaleId != null && localToRemoteSaleId.containsKey(localSaleId)) {
+          movMap['sale_id'] = localToRemoteSaleId[localSaleId];
+        } else if (localSaleId != null) {
+          // Look up the remote_id from the sales table; if the sale isn't
+          // synced yet, defer this movement to a later cycle.
+          final saleRows = await db.query(
+            'sales',
+            columns: ['remote_id'],
+            where: 'id = ?',
+            whereArgs: [localSaleId],
+          );
+          final remoteId = saleRows.isNotEmpty
+              ? saleRows.first['remote_id'] as int?
+              : null;
+          if (remoteId == null) {
+            debugPrint(
+              'ℹ️ Skipping movement for unsynced sale #$localSaleId — will retry',
+            );
+            continue;
+          }
+          movMap['sale_id'] = remoteId;
         }
 
-        await db.update(
-          'stock_movements',
-          {'is_synced': 1},
-          where: 'id = ?',
-          whereArgs: [localMovId],
-        );
+        try {
+          final clientId = movMap['client_id'] as String?;
+          if (clientId == null) {
+            // Legacy row pre-migration — fall back to plain insert + manual
+            // quantity update; mark synced regardless to avoid retry storms.
+            await _supabase.from('stock_movements').insert(movMap);
+            try {
+              final productId = movMap['product_id'];
+              final change = (movMap['change'] as num).toDouble();
+              final res = await _supabase
+                  .from('products')
+                  .select('quantity')
+                  .eq('id', productId)
+                  .maybeSingle();
+              if (res != null) {
+                final cur = (res['quantity'] as num).toDouble();
+                await _supabase
+                    .from('products')
+                    .update({'quantity': cur + change})
+                    .eq('id', productId);
+              }
+            } catch (_) {}
+          } else {
+            // Idempotent insert. ignoreDuplicates: true makes Postgres do
+            // ON CONFLICT (client_id) DO NOTHING. .select() returns the
+            // inserted row only on a fresh insert, so we know whether to
+            // also apply the quantity delta.
+            final result = await _supabase
+                .from('stock_movements')
+                .upsert(
+                  movMap,
+                  onConflict: 'client_id',
+                  ignoreDuplicates: true,
+                )
+                .select();
+            if (result.isNotEmpty) {
+              final productId = movMap['product_id'];
+              final change = (movMap['change'] as num).toDouble();
+              final res = await _supabase
+                  .from('products')
+                  .select('quantity')
+                  .eq('id', productId)
+                  .maybeSingle();
+              if (res != null) {
+                final cur = (res['quantity'] as num).toDouble();
+                await _supabase
+                    .from('products')
+                    .update({'quantity': cur + change})
+                    .eq('id', productId);
+              }
+            }
+          }
+
+          await db.update(
+            'stock_movements',
+            {'is_synced': 1},
+            where: 'id = ?',
+            whereArgs: [localMovId],
+          );
+        } catch (movErr) {
+          debugPrint('⚠️ Failed to push movement $localMovId: $movErr');
+        }
       }
 
       // 3. Update Sync Products
